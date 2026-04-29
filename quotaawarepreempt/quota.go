@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/kaschnit/custom-scheduler/internal/resconv"
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -110,7 +111,12 @@ func (qu *QuotaUsage) clone() *QuotaUsage {
 
 func newQuotaUsage(max, used corev1.ResourceList) *QuotaUsage {
 	if max == nil {
-		max = makeResourceListForBound(UpperBoundOfMax)
+		max = corev1.ResourceList{
+			corev1.ResourceCPU:              *resource.NewMilliQuantity(UpperBoundOfMax, resource.DecimalSI),
+			corev1.ResourceMemory:           *resource.NewQuantity(UpperBoundOfMax, resource.BinarySI),
+			corev1.ResourceEphemeralStorage: *resource.NewQuantity(UpperBoundOfMax, resource.BinarySI),
+			corev1.ResourcePods:             *resource.NewQuantity(UpperBoundOfMax, resource.DecimalSI),
+		}
 	}
 
 	return &QuotaUsage{
@@ -131,7 +137,7 @@ func (qu *QuotaUsage) addPodIfNotPresent(pod *corev1.Pod) error {
 	}
 
 	qu.pods.Insert(key)
-	qu.reserveResource(*computePodResourceRequest(pod))
+	qu.reserveResource(*resconv.ExtractFwkFromPod(pod))
 
 	return nil
 }
@@ -147,7 +153,7 @@ func (qu *QuotaUsage) deletePodIfPresent(pod *corev1.Pod) error {
 	}
 
 	qu.pods.Delete(key)
-	qu.unreserveResource(*computePodResourceRequest(pod))
+	qu.unreserveResource(*resconv.ExtractFwkFromPod(pod))
 
 	return nil
 }
@@ -177,34 +183,6 @@ func (qu *QuotaUsage) wouldPutOverMax(request *framework.Resource) bool {
 	defer qu.unreserveResource(*request)
 
 	return anyGreaterThanOnlyExisting(*qu.Used, *qu.Max)
-}
-
-func makeResourceListForBound(bound int64) corev1.ResourceList {
-	return corev1.ResourceList{
-		corev1.ResourceCPU:              *resource.NewMilliQuantity(bound, resource.DecimalSI),
-		corev1.ResourceMemory:           *resource.NewQuantity(bound, resource.BinarySI),
-		corev1.ResourceEphemeralStorage: *resource.NewQuantity(bound, resource.BinarySI),
-		corev1.ResourcePods:             *resource.NewQuantity(bound, resource.DecimalSI),
-	}
-}
-
-func computePodResourceRequest(pod *corev1.Pod) *framework.Resource {
-	result := &framework.Resource{}
-	for _, container := range pod.Spec.Containers {
-		result.Add(container.Resources.Requests)
-	}
-
-	// take max_resource(sum_pod, any_init_container)
-	for _, container := range pod.Spec.InitContainers {
-		result.SetMaxResource(container.Resources.Requests)
-	}
-
-	// If Overhead is being utilized, add to the total requests for the pod
-	if pod.Spec.Overhead != nil {
-		result.Add(pod.Spec.Overhead)
-	}
-
-	return result
 }
 
 func anyGreaterThanOnlyExisting(a framework.Resource, b framework.Resource) bool {

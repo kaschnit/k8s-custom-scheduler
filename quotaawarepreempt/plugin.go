@@ -24,6 +24,7 @@ const (
 	AnnotationKeyPrefix = "quota.scheduling.kaschnit.github.io/"
 )
 
+// Plugin is a kube-scheduler framework plugin for quota-aware preemption.
 type Plugin struct {
 	sync.RWMutex
 	quotas QuotaUsages
@@ -39,7 +40,7 @@ var (
 	_ fwk.EnqueueExtensions = (*Plugin)(nil)
 )
 
-// NewPlugin initializes a new plugin and returns it.
+// NewPlugin initializes a new [Plugin] and returns it.
 func NewPlugin(ctx context.Context, rawArgs runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
 	args, ok := rawArgs.(*config.QuotaArgs)
 	if !ok {
@@ -70,7 +71,7 @@ func (plugin *Plugin) PreFilter(
 	stateMgr := NewStateManager(state)
 	stateMgr.WriteQuotaUsageSnapshot(plugin.createQuotasSnapshot())
 
-	podReq := computePodResourceRequest(pod)
+	podReq := resconv.ExtractFwkFromPod(pod)
 
 	queue, quota := plugin.quotas.getQuota(pod)
 	if quota == nil {
@@ -95,7 +96,7 @@ func (plugin *Plugin) PreFilter(
 
 			nomQueue, nomQuota := plugin.quotas.getQuota(nomPodInfo.GetPod())
 			if nomQuota != nil {
-				nomResourceRequest := resconv.FwkToCoreV1List(computePodResourceRequest(nomPodInfo.GetPod()))
+				nomResourceRequest := resconv.FwkToCoreV1List(resconv.ExtractFwkFromPod(nomPodInfo.GetPod()))
 				// If they are subject to the same quota and nomPod is scheduled ahead of (higher priority than) pod,
 				// nomPod will be added to the nominatedReqInQuota.
 				// If they aren't subject to the same quota and the usage of nomQuota does not exceed min,
