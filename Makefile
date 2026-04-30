@@ -14,7 +14,7 @@ GOLANGCI_LINT ?= $(GO) tool github.com/golangci/golangci-lint/v2/cmd/golangci-li
 KO ?= $(GO) tool github.com/google/ko
 KUBEBUILDER ?= $(GO) tool sigs.k8s.io/kubebuilder/v4
 
-CMD := $(CURDIR)/cmd
+CMD := $(CURDIR)/cmd/scheduler
 CRD_BASES := $(CURDIR)/config/crd/bases
 
 ## Location for build artifacts
@@ -76,7 +76,7 @@ test: generate ## Run unit tests.
 
 .PHONY: build
 build: generate $(BUILD_DIR) ## Build manager binary.
-	$(GO) build -o $(BUILD_DIR)/manager $(CMD)
+	$(GO) build -o $(BUILD_DIR)/scheduler $(CMD)
 
 .PHONY: run
 run: generate ## Run a controller from your host.
