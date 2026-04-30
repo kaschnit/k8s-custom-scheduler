@@ -1,4 +1,4 @@
-package config
+package v1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -7,8 +7,8 @@ import (
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// QuotaArgs holds arguments used to configure Quota plugin.
-type QuotaArgs struct {
+// QuotaAwarePreemptionArgs holds arguments used to configure QuotaAwarePreemptio plugin.
+type QuotaAwarePreemptionArgs struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// EnableAsyncPreemption is whether to enable async preemption.

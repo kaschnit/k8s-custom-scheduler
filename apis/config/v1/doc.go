@@ -1,4 +1,4 @@
 // +k8s:deepcopy-gen=package
 
 // Package config of the API.
-package config
+package v1

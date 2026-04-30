@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/kaschnit/custom-scheduler/apis/config"
+	configv1 "github.com/kaschnit/custom-scheduler/apis/config/v1"
+	"github.com/kaschnit/custom-scheduler/apis/scheduling"
 	"github.com/kaschnit/custom-scheduler/internal/resconv"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,19 +15,16 @@ import (
 	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
+	schedruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 )
 
 const (
 	// Name is the name of the scheduling plugin.
-	Name = "Quota"
-
-	// GroupName is the API group name for this scheduling plugin.
-	// TODO: move this to /apis when we add queue CRD.
-	GroupName = "scheduling.kaschnit.github.io"
+	Name = "QuotaAwarePreemption"
 
 	// AnnotatioNKeyPrefix is the prefix of the annotations for this plugin.
-	AnnotationKeyPrefix = "quota." + GroupName + "/"
+	AnnotationKeyPrefix = "quota." + scheduling.GroupName + "/"
 )
 
 // Plugin is a kube-scheduler framework plugin for quota-aware preemption.
@@ -35,7 +33,7 @@ type Plugin struct {
 	quotas QuotaUsages
 	logger klog.Logger
 	fh     fwk.Handle
-	args   config.QuotaArgs
+	args   configv1.QuotaAwarePreemptionArgs
 }
 
 var (
@@ -47,17 +45,18 @@ var (
 
 // NewPlugin initializes a new [Plugin] and returns it.
 func NewPlugin(ctx context.Context, rawArgs runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
-	args, ok := rawArgs.(*config.QuotaArgs)
-	if !ok {
-		return nil, fmt.Errorf("got args of type %T, want *PreemptionTolerationArgs", args)
+	var args configv1.QuotaAwarePreemptionArgs
+	if err := schedruntime.DecodeInto(rawArgs, &args); err != nil {
+		return nil, err
 	}
+
 	logger := klog.FromContext(ctx).WithValues("plugin", Name)
 
 	plugin := Plugin{
 		quotas: make(QuotaUsages),
 		logger: logger,
 		fh:     fh,
-		args:   *args,
+		args:   args,
 	}
 
 	// Init quotas from scheduler config.

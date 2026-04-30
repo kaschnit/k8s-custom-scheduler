@@ -85,4 +85,15 @@ run: generate ## Run a controller from your host.
 .PHONY: image
 image: PUSH := false
 image: generate $(BUILD_DIR) ## Build an image and optionally push it.
-	$(KO) build $(CMD) --push=$(PUSH) --platform=linux/$(shell $(GO) env GOARCH) --tarball=$(BUILD_DIR)/image.tar
+	KO_DOCKER_REPO=kschnitzer-custom-scheduler \
+		$(KO) build \
+			--push=$(PUSH) \
+			--platform=linux/$(shell $(GO) env GOARCH) \
+			--tarball=$(BUILD_DIR)/image.tar \
+			--bare \
+			--tags=development \
+			$(CMD)
+
+.PHONY: kind-deploy
+kind-deploy: image
+	$(CURDIR)/test/kind/create-cluster.sh
