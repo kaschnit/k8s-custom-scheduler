@@ -54,10 +54,20 @@ func NewPlugin(ctx context.Context, rawArgs runtime.Object, fh fwk.Handle) (fwk.
 	logger := klog.FromContext(ctx).WithValues("plugin", Name)
 
 	plugin := Plugin{
+		quotas: make(QuotaUsages),
 		logger: logger,
 		fh:     fh,
 		args:   *args,
 	}
+
+	// Init quotas from scheduler config.
+	// TODO: move to a custom resource with informer to make this nicer.
+	//	Custom resource will allow updating quotas without restarting the scheduler.
+	//	It will also allow easier configuration generally.
+	for queue, quota := range args.Queues {
+		plugin.quotas[queue] = newQuotaUsage(quota.Quota)
+	}
+
 	return &plugin, nil
 }
 

@@ -109,7 +109,7 @@ func (qu *QuotaUsage) clone() *QuotaUsage {
 	return newQuotaUsage
 }
 
-func newQuotaUsage(max, used corev1.ResourceList) *QuotaUsage {
+func newQuotaUsage(max corev1.ResourceList) *QuotaUsage {
 	if max == nil {
 		max = corev1.ResourceList{
 			corev1.ResourceCPU:              *resource.NewMilliQuantity(UpperBoundOfMax, resource.DecimalSI),
@@ -122,7 +122,7 @@ func newQuotaUsage(max, used corev1.ResourceList) *QuotaUsage {
 	return &QuotaUsage{
 		pods: sets.New[string](),
 		Max:  framework.NewResource(max),
-		Used: framework.NewResource(used),
+		Used: framework.NewResource(nil),
 	}
 }
 
