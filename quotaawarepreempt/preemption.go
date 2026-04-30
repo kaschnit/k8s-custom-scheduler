@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/kaschnit/custom-scheduler/internal/boolstr"
+	"github.com/kaschnit/custom-scheduler/internal/pdbutil"
 	"github.com/kaschnit/custom-scheduler/internal/resconv"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -330,7 +331,7 @@ func (p *preemptor) SelectVictimsOnNode(
 	// and see if we can still fit the preemptor.
 	// If the preemptor fits with pi added back, it's not a victim.
 	// If the preemptor does not fit with the pi added back, it's a victim.
-	// Returns whether the preemptor fits with pi added back.
+	// Returns whether pi is reprieved.
 	maybeReprievePod := func(pi fwk.PodInfo) (bool, error) {
 		// Add the potential victim back to the node
 		if err := addPod(pi); err != nil {
@@ -342,9 +343,8 @@ func (p *preemptor) SelectVictimsOnNode(
 		// on the node with the potential victim added back, and thus whether the potential
 		// victim can be reprieved.
 		status := p.fh.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo)
-		fits := status.IsSuccess()
-		if !fits {
-			// No reprieval; this pod should indeed be a victim.
+		if !status.IsSuccess() {
+			// Pod did not fit on node with preemptor; this pod should indeed be a victim.
 			if err := removePod(pi); err != nil {
 				return false, err
 			}
@@ -352,6 +352,8 @@ func (p *preemptor) SelectVictimsOnNode(
 			logger.V(5).Info("Found a potential preemption victim on node",
 				"pod", klog.KObj(pi.GetPod()),
 				"node", klog.KObj(nodeInfo.Node()))
+
+			return false, nil
 		}
 
 		// Check if the quotas are in violation after adding back the potential victim.
@@ -359,7 +361,7 @@ func (p *preemptor) SelectVictimsOnNode(
 		// below the max to make room for the preemptor.
 		if preemptorQuota != nil &&
 			preemptorQuota.wouldPutOverMax(resconv.AddFwk(&preFilterState.request, &preFilterState.nominatedReqInQuota)) {
-			// No repreival; this pod should indeed be a victim.
+			// Pod did not fit in quota with preemptor; this pod should indeed be a victim.
 			if err := removePod(pi); err != nil {
 				return false, err
 			}
@@ -367,9 +369,26 @@ func (p *preemptor) SelectVictimsOnNode(
 			logger.V(5).Info("Found a potential preemption victim on node",
 				"pod", klog.KObj(pi.GetPod()),
 				"node", klog.KObj(nodeInfo.Node()))
+
+			return false, nil
 		}
 
-		return fits, nil
+		return true, nil
+	}
+
+	numPDBViolationVictims := 0
+	pdbViolationEval := pdbutil.EvaluatePodRemovalViolations(potentialVictims, pdbs)
+	for _, pi := range pdbViolationEval.ViolatingPods {
+		reprieved, err := maybeReprievePod(pi)
+		if err != nil {
+			logger.Error(err, "Failed to reprieve pod", "pod", klog.KObj(pi.GetPod()))
+			return nil, 0, fwk.AsStatus(err)
+		}
+
+		// PDB violation pod was not reprieved, so it's a victim.
+		if !reprieved {
+			numPDBViolationVictims++
+		}
 	}
 
 	// Now we try to reprieve non-violating victims.
@@ -380,7 +399,9 @@ func (p *preemptor) SelectVictimsOnNode(
 		}
 	}
 
-	// TODO: handle PodDisruptionBudget (PDB) violation.
-	// The 2nd return value should be the number of victims with PDB violations.
-	return victims, 0, fwk.NewStatus(fwk.Success)
+	// PDB violation eval may cause victims to be out of order.
+	// Ensure victims are kept in order from highest priority to lowest priority.
+	sort.Slice(victims, func(i, j int) bool { return schedutil.MoreImportantPod(victims[i], victims[j]) })
+
+	return victims, numPDBViolationVictims, fwk.NewStatus(fwk.Success)
 }

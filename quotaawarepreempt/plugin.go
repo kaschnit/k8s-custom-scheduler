@@ -20,8 +20,13 @@ import (
 const (
 	// Name is the name of the scheduling plugin.
 	Name = "Quota"
+
+	// GroupName is the API group name for this scheduling plugin.
+	// TODO: move this to /apis when we add queue CRD.
+	GroupName = "scheduling.kaschnit.github.io"
+
 	// AnnotatioNKeyPrefix is the prefix of the annotations for this plugin.
-	AnnotationKeyPrefix = "quota.scheduling.kaschnit.github.io/"
+	AnnotationKeyPrefix = "quota." + GroupName + "/"
 )
 
 // Plugin is a kube-scheduler framework plugin for quota-aware preemption.
@@ -157,7 +162,21 @@ func (plugin *Plugin) AddPod(
 	podInfoToAdd fwk.PodInfo,
 	nodeInfo fwk.NodeInfo,
 ) *fwk.Status {
-	panic("unimplemented")
+	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger))
+	stateMgr := NewStateManager(state)
+
+	quotaSnapshotState, err := stateMgr.ReadQuotaUsageSnapshot()
+	if err != nil {
+		logger.Error(err, "Failed to read quotaSnapshotState from cycleState")
+		return fwk.NewStatus(fwk.Error, err.Error())
+	}
+
+	if err := quotaSnapshotState.quotaUsages.addPodIfNotPresent(podInfoToAdd.GetPod()); err != nil {
+		logger.Error(err, "Failed to add Pod to its associated quota usage",
+			"pod", klog.KObj(podInfoToAdd.GetPod()))
+	}
+
+	return fwk.NewStatus(fwk.Success, "")
 }
 
 // RemovePod implements [framework.PreFilterExtensions].
@@ -212,7 +231,24 @@ func (plugin *Plugin) Unreserve(ctx context.Context, state fwk.CycleState, pod *
 
 // EventsToRegister implements [framework.EnqueueExtensions].
 func (plugin *Plugin) EventsToRegister(context.Context) ([]fwk.ClusterEventWithHint, error) {
-	panic("unimplemented")
+	return []fwk.ClusterEventWithHint{
+		{
+			Event: fwk.ClusterEvent{
+				Resource:   fwk.Pod,
+				ActionType: fwk.Delete,
+			},
+		},
+		// We only need this if we depend on a custom resource for configuration.
+		// Currently expects KubeSchedulerConfig for queue configuration, but we
+		// should move to a custom resource.
+		// TODO: update this to match custom resource when it exists.
+		// {
+		// 	Event: fwk.ClusterEvent{
+		// 		Resource:   fwk.EventResource(fmt.Sprintf("quotas.v1alpha1.%s", GroupName)),
+		// 		ActionType: fwk.All,
+		// 	},
+		// },
+	}, nil
 }
 
 func (plugin *Plugin) createQuotasSnapshot() *QuotaUsageSnapshotState {
