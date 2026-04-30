@@ -44,6 +44,16 @@ var (
 )
 
 // NewPlugin initializes a new [Plugin] and returns it.
+//
+// TODO: setup pod shared informer to help reconcile quota.
+// Currently Reserve() and Unreserve() are used to track quota from pods being scheduled and
+// completed. However Unreserve() is not called when you delete a pod, since a scheduler cycle
+// does not run in response to pod deletion.
+// Set up pod informer:
+//   - Filter by pods with NodeName so we prune down to only pods that are actually allocated.
+//   - AddFunc should add pod quota.
+//   - DeleteFunc should remove pod quota.
+//   - UpdateFunc should do <something>???
 func NewPlugin(ctx context.Context, rawArgs runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
 	var args configv1.QuotaAwarePreemptionArgs
 	if err := schedruntime.DecodeInto(rawArgs, &args); err != nil {
@@ -83,11 +93,13 @@ func (plugin *Plugin) PreFilter(
 	nodes []fwk.NodeInfo,
 ) (*fwk.PreFilterResult, *fwk.Status) {
 	stateMgr := NewStateManager(state)
-	stateMgr.WriteQuotaUsageSnapshot(plugin.createQuotasSnapshot())
+
+	quotaSnapshot := plugin.createQuotasSnapshot()
+	stateMgr.WriteQuotaUsageSnapshot(quotaSnapshot)
 
 	podReq := resconv.ExtractFwkFromPod(pod)
 
-	queue, quota := plugin.quotas.getQuota(pod)
+	queue, quota := quotaSnapshot.quotaUsages.getQuota(pod)
 	if quota == nil {
 		stateMgr.WritePreFilter(&PreFilterState{
 			request: *podReq,
@@ -108,7 +120,7 @@ func (plugin *Plugin) PreFilter(
 				continue
 			}
 
-			nomQueue, nomQuota := plugin.quotas.getQuota(nomPodInfo.GetPod())
+			nomQueue, nomQuota := quotaSnapshot.quotaUsages.getQuota(nomPodInfo.GetPod())
 			if nomQuota != nil {
 				nomResourceRequest := resconv.FwkToCoreV1List(resconv.ExtractFwkFromPod(nomPodInfo.GetPod()))
 				// If they are subject to the same quota and nomPod is scheduled ahead of (higher priority than) pod,
@@ -129,7 +141,8 @@ func (plugin *Plugin) PreFilter(
 
 	if quota.wouldPutOverMax(resconv.AddFwk(&nominatedReqInQuota, podReq)) {
 		return nil, fwk.NewStatus(fwk.Unschedulable,
-			fmt.Sprintf("Pod %v/%v is rejected in PreFilter because quota %s is more than Max", pod.Namespace, pod.Name, queue))
+			fmt.Sprintf("Pod %v/%v is rejected in PreFilter because queue %s is at quota (used=%+v, max=%+v)",
+				pod.Namespace, pod.Name, queue, quota.Used, quota.Max))
 	}
 
 	return nil, fwk.NewStatus(fwk.Success, "")
