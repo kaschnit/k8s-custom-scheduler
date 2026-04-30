@@ -135,7 +135,7 @@ func (plugin *Plugin) PostFilter(
 ) (*fwk.PostFilterResult, *fwk.Status) {
 	defer metrics.PreemptionAttempts.Inc()
 
-	pe := preemption.NewEvaluator(
+	evaluator := preemption.NewEvaluator(
 		plugin.Name(),
 		plugin.fh,
 		&preemptor{
@@ -146,7 +146,7 @@ func (plugin *Plugin) PostFilter(
 		plugin.args.EnableAsyncPreemption,
 	)
 
-	return pe.Preempt(ctx, state, pod, m)
+	return evaluator.Preempt(ctx, state, pod, m)
 }
 
 // AddPod implements [framework.PreFilterExtensions].
@@ -168,7 +168,21 @@ func (plugin *Plugin) RemovePod(
 	podInfoToRemove fwk.PodInfo,
 	nodeInfo fwk.NodeInfo,
 ) *fwk.Status {
-	panic("unimplemented")
+	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger))
+	stateMgr := NewStateManager(state)
+
+	quotaSnapshotState, err := stateMgr.ReadQuotaUsageSnapshot()
+	if err != nil {
+		logger.Error(err, "Failed to read quotaSnapshotState from cycleState")
+		return fwk.NewStatus(fwk.Error, err.Error())
+	}
+
+	if err := quotaSnapshotState.quotaUsages.deletePodIfPresent(podInfoToRemove.GetPod()); err != nil {
+		logger.Error(err, "Failed to delete Pod from its associated quota usage",
+			"pod", klog.KObj(podInfoToRemove.GetPod()))
+	}
+
+	return fwk.NewStatus(fwk.Success, "")
 }
 
 // Reserve implements [framework.ReservePlugin].
