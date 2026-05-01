@@ -10,7 +10,7 @@ import (
 
 func main() {
 	command := scheduler.NewSchedulerCommand(
-		scheduler.WithPlugin(quotaawarepreempt.Name, quotaawarepreempt.NewPlugin))
+		scheduler.WithPlugin(quotaawarepreempt.PluginName, quotaawarepreempt.NewPlugin))
 
 	exitStatus := cli.Run(command)
 	os.Exit(exitStatus)

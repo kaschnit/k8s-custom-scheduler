@@ -6,7 +6,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
-const stateKeyPreFilter fwk.StateKey = "PreFilter" + Name
+const stateKeyPreFilter fwk.StateKey = "PreFilter" + PluginName
 
 var _ fwk.StateData = (*PreFilterState)(nil)
 
@@ -23,7 +23,7 @@ func (s *PreFilterState) Clone() fwk.StateData {
 	}
 }
 
-const stateKeyQuotaSnapshot fwk.StateKey = "QuotaSnapshot" + Name
+const stateKeyQuotaSnapshot fwk.StateKey = "QuotaSnapshot" + PluginName
 
 var _ fwk.StateData = (*QuotaUsageSnapshotState)(nil)
 
