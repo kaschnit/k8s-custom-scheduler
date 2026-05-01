@@ -78,24 +78,24 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	if pod.Spec.PreemptionPolicy != nil {
 		switch *pod.Spec.PreemptionPolicy {
 		case corev1.PreemptNever:
-			logger.V(5).Info("Pod is not eligible for preemption because of its preemptionPolicy",
+			logger.V(5).Info("Pod is not eligible to preempt because of its preemptionPolicy",
 				"pod", klog.KObj(pod),
 				"preemptionPolicy", corev1.PreemptNever)
-			return false, "not eligible due to preemptionPolicy=Never."
+			return false, "Not eligible to preempt due to preemptionPolicy=Never."
 		case corev1.PreemptLowerPriority: // Preemption allowed
 		case "": // Preemption allowed (default is PreemptLowerPriority)
 		default:
-			logger.Info("Pod is not eligible for preemption because of its preemptionPolicy",
+			logger.Info("Pod is not eligible to preempt because of its preemptionPolicy",
 				"pod", klog.KObj(pod),
 				"preemptionPolicy", corev1.PreemptNever)
-			return false, "not eligible due to unknown preemptionPolicy."
+			return false, "Not eligible to preempt due to unknown preemptionPolicy."
 		}
 	}
 
 	// Check the is-preemptor annotation.
 	// The pod is only eligible to preempt if it has this annotation.
 	if !boolstr.IsTrue(pod.Annotations[AnnotationKeyIsPreemptor]) {
-		return false, "not eligible due to is-preemptor!=true"
+		return false, "Not eligible to preempt due to is-preemptor!=true"
 	}
 
 	// If no nominated node for this pod, then it has not yet been considered for preemption.
@@ -127,7 +127,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	preFilterState, err := p.stateMgr.ReadPreFilter()
 	if err != nil {
 		logger.V(5).Error(err, "Failed to read preFilterState from cycleState")
-		return false, "not eligible due to failed to read from cycleState"
+		return false, "Not eligible to preempt due to failed to read from cycleState"
 	}
 
 	// Fetch the quota snapshot from the prefilter.
@@ -174,14 +174,14 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 			if preemptorQ == victimQ && corev1helpers.PodPriority(victimInfo.GetPod()) < preemptorPriority {
 				// There is a terminating victim in the queue (sharing quota with preemptor) and of lower priority.
 				// This may free up room to schedule the preemptor, so no need to preempt.
-				return false, "not eligible due to a terminating pod on the nominated node."
+				return false, "Not eligible to preempt due to a terminating pod on the nominated node."
 			}
 
 			if preemptorQ != victimQ && !wouldBeOverQuota {
 				// There is a terminating victim in a different queue (not sharing quota with preemptor).
 				// The preemptor is also not going to be over its quota, and thus is schedulable in terms of quota.
 				// So, waiting for this victim to finish terminating will allow the preemptor to schedule.
-				return false, "not eligible due to a terminating pod on the nominated node."
+				return false, "Not eligible to preempt due to a terminating pod on the nominated node."
 			}
 
 		}
@@ -200,7 +200,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 			if corev1helpers.PodPriority(victimPodInfo.GetPod()) < preemptorPriority {
 				// There is a terminating victim of lower priority.
 				// This may free up room to schedule the preemptor, so no need to preempt.
-				return false, "not eligible due to a terminating pod on the nominated node."
+				return false, "Not eligible to preempt due to a terminating pod on the nominated node."
 			}
 		}
 	}
@@ -313,7 +313,7 @@ func (p *preemptor) SelectVictimsOnNode(
 	if preemptorQuota != nil && preemptorQuota.wouldPutOverMax(&preFilterState.request) {
 		// If there's a quota and it's exceeded even after removing all potential victims,
 		// there's nothing we can do on this node to make pods schedule. So this node is
-		// not eligible for preemption.
+		// not eligible for preemption (i.e. has no eligible victims).
 		return nil, 0, fwk.NewStatus(fwk.Unschedulable, "quota exceeded")
 	}
 
