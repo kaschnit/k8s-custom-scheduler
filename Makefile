@@ -32,7 +32,6 @@ help: ## Display this help.
 clean: ## Clean up files.
 	find . -name .DS_Store -type f -delete
 	find . -name zz_generated.*.go -type f -delete
-	rm -rf $(CRD_BASES)
 	rm -rf $(BUILD_DIR)
 
 ##@ Development
