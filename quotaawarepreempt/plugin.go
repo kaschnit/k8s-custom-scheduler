@@ -39,10 +39,11 @@ type Plugin struct {
 }
 
 var (
-	_ fwk.PreFilterPlugin   = (*Plugin)(nil)
-	_ fwk.PostFilterPlugin  = (*Plugin)(nil)
-	_ fwk.ReservePlugin     = (*Plugin)(nil)
-	_ fwk.EnqueueExtensions = (*Plugin)(nil)
+	_ fwk.PreFilterPlugin     = (*Plugin)(nil)
+	_ fwk.PreFilterExtensions = (*Plugin)(nil)
+	_ fwk.PostFilterPlugin    = (*Plugin)(nil)
+	_ fwk.ReservePlugin       = (*Plugin)(nil)
+	_ fwk.EnqueueExtensions   = (*Plugin)(nil)
 )
 
 // NewPlugin initializes a new [Plugin] and returns it.
@@ -165,8 +166,8 @@ func (plugin *Plugin) PreFilter(
 
 	if quota.wouldPutOverMax(resconv.AddFwk(&nominatedReqInQuota, podReq)) {
 		return nil, fwk.NewStatus(fwk.Unschedulable,
-			fmt.Sprintf("Pod %v/%v is rejected in PreFilter because queue %s is at quota (used=%+v, max=%+v)",
-				pod.Namespace, pod.Name, queue, quota.Used, quota.Max))
+			fmt.Sprintf("Not eligible for scheduling because queue %s exceeds quota (used=%+v, max=%+v)",
+				queue, quota.Used, quota.Max))
 	}
 
 	return nil, fwk.NewStatus(fwk.Success, "")
@@ -184,6 +185,10 @@ func (plugin *Plugin) PostFilter(
 	pod *corev1.Pod,
 	m fwk.NodeToStatusReader,
 ) (*fwk.PostFilterResult, *fwk.Status) {
+	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger))
+	logger.Info("Running PostFilter",
+		"pod", klog.KObj(pod))
+
 	defer metrics.PreemptionAttempts.Inc()
 
 	evaluator := preemption.NewEvaluator(
@@ -197,7 +202,13 @@ func (plugin *Plugin) PostFilter(
 		plugin.args.EnableAsyncPreemption,
 	)
 
-	return evaluator.Preempt(ctx, state, pod, m)
+	result, status := evaluator.Preempt(ctx, state, pod, m)
+	logger.Info("Got preemption evaluation result for pod",
+		"pod", klog.KObj(pod),
+		"result", result,
+		"status", status)
+
+	return result, status
 }
 
 // AddPod implements [framework.PreFilterExtensions].
@@ -208,7 +219,10 @@ func (plugin *Plugin) AddPod(
 	podInfoToAdd fwk.PodInfo,
 	nodeInfo fwk.NodeInfo,
 ) *fwk.Status {
-	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger))
+	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger)).WithValues(
+		"podToSchedule", klog.KObj(podToSchedule),
+		"podToAdd", klog.KObj(podInfoToAdd.GetPod()))
+
 	stateMgr := NewStateManager(state)
 
 	quotaSnapshotState, err := stateMgr.ReadQuotaUsageSnapshot()
@@ -233,7 +247,10 @@ func (plugin *Plugin) RemovePod(
 	podInfoToRemove fwk.PodInfo,
 	nodeInfo fwk.NodeInfo,
 ) *fwk.Status {
-	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger))
+	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger)).WithValues(
+		"podToSchedule", klog.KObj(podToSchedule),
+		"podToRemove", klog.KObj(podInfoToRemove.GetPod()))
+
 	stateMgr := NewStateManager(state)
 
 	quotaSnapshotState, err := stateMgr.ReadQuotaUsageSnapshot()
@@ -285,7 +302,10 @@ func (plugin *Plugin) EventsToRegister(context.Context) ([]fwk.ClusterEventWithH
 		{
 			Event: fwk.ClusterEvent{
 				Resource:   fwk.Pod,
-				ActionType: fwk.Delete,
+				ActionType: fwk.All,
+			},
+			QueueingHintFn: func(_ klog.Logger, _ *corev1.Pod, oldObj, newObj any) (fwk.QueueingHint, error) {
+				return fwk.Queue, nil
 			},
 		},
 		// TODO: Add cluster event for quotas if we make quotas dynamic.

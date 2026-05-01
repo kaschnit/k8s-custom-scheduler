@@ -78,7 +78,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	if pod.Spec.PreemptionPolicy != nil {
 		switch *pod.Spec.PreemptionPolicy {
 		case corev1.PreemptNever:
-			logger.V(5).Info("Pod is not eligible to preempt because of its preemptionPolicy",
+			logger.Info("Pod is not eligible to preempt because of its preemptionPolicy",
 				"pod", klog.KObj(pod),
 				"preemptionPolicy", corev1.PreemptNever)
 			return false, "Not eligible to preempt due to preemptionPolicy=Never."
@@ -118,7 +118,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	// Fetch the node info and ensure it exists.
 	nodeInfo, err := p.fh.SnapshotSharedLister().NodeInfos().Get(pod.Status.NominatedNodeName)
 	if nodeInfo == nil || err != nil {
-		logger.V(5).Info("Unable to find node info of nominated node",
+		logger.Info("Unable to find node info of nominated node",
 			"nomNodeName", pod.Status.NominatedNodeName,
 			"err", err)
 	}
@@ -126,7 +126,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	// Fetch the prefilter state.
 	preFilterState, err := p.stateMgr.ReadPreFilter()
 	if err != nil {
-		logger.V(5).Error(err, "Failed to read preFilterState from cycleState")
+		logger.Error(err, "Failed to read preFilterState from cycleState")
 		return false, "Not eligible to preempt due to failed to read from cycleState"
 	}
 
@@ -217,9 +217,11 @@ func (p *preemptor) SelectVictimsOnNode(
 	nodeInfo fwk.NodeInfo,
 	pdbs []*policyv1.PodDisruptionBudget,
 ) ([]*corev1.Pod, int, *fwk.Status) {
-	// Ref 1: https://github.com/kubernetes-sigs/scheduler-plugins/blob/2c75c8b5cb943435e94ffd325d9f1542d01f175f/pkg/capacityscheduling/capacity_scheduling.go#L486-L677
-	// Ref 2: https://github.com/kubernetes-sigs/scheduler-plugins/blob/2c75c8b5cb943435e94ffd325d9f1542d01f175f/pkg/preemptiontoleration/preemption_toleration.go#L188-L299
-	logger := p.logger
+	logger := p.logger.WithValues(
+		"preemptor", klog.KObj(pod),
+		"node", klog.KObj(nodeInfo.Node()))
+
+	logger.Info("Selecting victims on node for preemption")
 
 	preFilterState, err := p.stateMgr.ReadPreFilter()
 	if err != nil {
@@ -243,6 +245,9 @@ func (p *preemptor) SelectVictimsOnNode(
 		if !status.IsSuccess() {
 			return status.AsError()
 		}
+		if err := quotaSnapshotState.quotaUsages.deletePodIfPresent(pi.GetPod()); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -254,11 +259,16 @@ func (p *preemptor) SelectVictimsOnNode(
 		if !status.IsSuccess() {
 			return status.AsError()
 		}
+		if err := quotaSnapshotState.quotaUsages.addPodIfNotPresent(pi.GetPod()); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	_, preemptorQuota := quotaSnapshotState.quotaUsages.getQuota(pod)
 	preemptorPriority := corev1helpers.PodPriority(pod)
+
+	logger.Info("Looking for potential preemption victim on node")
 
 	// Identify all potential victims, simulating their removal.
 	var potentialVictims []fwk.PodInfo
@@ -300,13 +310,18 @@ func (p *preemptor) SelectVictimsOnNode(
 
 	if len(potentialVictims) == 0 {
 		// No potential victims are found, so we don't need to evaluate the node again since its state didn't change.
+		logger.Info("Did not find any potential victims on node")
 		return nil, 0, fwk.NewStatus(fwk.UnschedulableAndUnresolvable,
 			fmt.Sprintf("No victims found on node %s for preemptor pod %s", nodeInfo.Node().Name, pod.Name))
 	}
 
+	logger.Info("Found potential victims on node",
+		"numPotentialVictims", len(potentialVictims))
+
 	if status := p.fh.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo); !status.IsSuccess() {
 		// If the new pod does not fit after removing all the lower priority pods,
 		// this node is not suitable for preemption.
+		logger.Info("Preemptor does not fit on node after removing potential victims")
 		return nil, 0, status
 	}
 
@@ -314,7 +329,13 @@ func (p *preemptor) SelectVictimsOnNode(
 		// If there's a quota and it's exceeded even after removing all potential victims,
 		// there's nothing we can do on this node to make pods schedule. So this node is
 		// not eligible for preemption (i.e. has no eligible victims).
-		return nil, 0, fwk.NewStatus(fwk.Unschedulable, "quota exceeded")
+		logger.Info("Preemptor does not fit quota after removing potential victims from node",
+			"requested", preFilterState.request,
+			"used", preemptorQuota.Used,
+			"max", preemptorQuota.Max)
+		return nil, 0, fwk.NewStatus(fwk.Unschedulable,
+			fmt.Sprintf("Not eligible for preemption because queue exceeds after preemption (used=%+v, max=%+v)",
+				preemptorQuota.Used, preemptorQuota.Max))
 	}
 
 	// Sort potential victims in descending order of priority.
@@ -349,7 +370,7 @@ func (p *preemptor) SelectVictimsOnNode(
 				return false, err
 			}
 			victims = append(victims, pi.GetPod())
-			logger.V(5).Info("Found a potential preemption victim on node",
+			logger.Info("Found a preemption victim on node",
 				"pod", klog.KObj(pi.GetPod()),
 				"node", klog.KObj(nodeInfo.Node()))
 
@@ -366,7 +387,7 @@ func (p *preemptor) SelectVictimsOnNode(
 				return false, err
 			}
 			victims = append(victims, pi.GetPod())
-			logger.V(5).Info("Found a potential preemption victim on node",
+			logger.Info("Found a preemption victim on node",
 				"pod", klog.KObj(pi.GetPod()),
 				"node", klog.KObj(nodeInfo.Node()))
 
@@ -378,10 +399,14 @@ func (p *preemptor) SelectVictimsOnNode(
 
 	numPDBViolationVictims := 0
 	pdbViolationEval := pdbutil.EvaluatePodRemovalViolations(potentialVictims, pdbs)
+
+	logger.Info("Attempting reprieval on PDB-violating potential victims",
+		"numPDBViolatingPotentialVictims", len(pdbViolationEval.ViolatingPods))
 	for _, pi := range pdbViolationEval.ViolatingPods {
 		reprieved, err := maybeReprievePod(pi)
 		if err != nil {
-			logger.Error(err, "Failed to reprieve pod", "pod", klog.KObj(pi.GetPod()))
+			logger.Error(err, "Failed to reprieve PDB-violating potential victim",
+				"pod", klog.KObj(pi.GetPod()))
 			return nil, 0, fwk.AsStatus(err)
 		}
 
@@ -392,9 +417,12 @@ func (p *preemptor) SelectVictimsOnNode(
 	}
 
 	// Now we try to reprieve non-violating victims.
-	for _, pi := range potentialVictims {
+	logger.Info("Attempting reprieval on non-PDB-violating potential victims",
+		"numNonPDBViolatingPotentialVictims", len(pdbViolationEval.NonViolatingPods))
+	for _, pi := range pdbViolationEval.NonViolatingPods {
 		if _, err := maybeReprievePod(pi); err != nil {
-			logger.Error(err, "Failed to reprieve pod", "pod", klog.KObj(pi.GetPod()))
+			logger.Error(err, "Failed to reprieve non-PDB-violating potential victim",
+				"pod", klog.KObj(pi.GetPod()))
 			return nil, 0, fwk.AsStatus(err)
 		}
 	}
@@ -402,6 +430,10 @@ func (p *preemptor) SelectVictimsOnNode(
 	// PDB violation eval may cause victims to be out of order.
 	// Ensure victims are kept in order from highest priority to lowest priority.
 	sort.Slice(victims, func(i, j int) bool { return schedutil.MoreImportantPod(victims[i], victims[j]) })
+
+	logger.Info("Finished selecting victims on node",
+		"numVictims", len(victims),
+		"numPDBViolationVictims", numPDBViolationVictims)
 
 	return victims, numPDBViolationVictims, fwk.NewStatus(fwk.Success)
 }

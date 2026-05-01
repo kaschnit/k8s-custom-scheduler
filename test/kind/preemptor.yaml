@@ -2,9 +2,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nginx1
+  name: nginx-preemptor
   annotations:
     quota.scheduling.kaschnit.github.io/queue: "tenant-a"
+    quota.scheduling.kaschnit.github.io/is-preemptor: "true"
 spec:
   schedulerName: custom-scheduler
   priorityClassName: "high"
@@ -14,7 +15,7 @@ spec:
     imagePullPolicy: IfNotPresent
     resources:
       requests:
-        cpu: 3
+        cpu: 2
         memory: 1Gi
       limits:
         cpu: 5

@@ -19,7 +19,8 @@ type PreFilterState struct {
 // Clone implements [fwk.StateData].
 func (s *PreFilterState) Clone() fwk.StateData {
 	return &PreFilterState{
-		request: *s.request.Clone(),
+		request:             *s.request.Clone(),
+		nominatedReqInQuota: *s.nominatedReqInQuota.Clone(),
 	}
 }
 

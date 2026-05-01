@@ -159,30 +159,15 @@ func (qu *QuotaUsage) deletePodIfPresent(pod *corev1.Pod) error {
 }
 
 func (qu *QuotaUsage) reserveResource(request framework.Resource) {
-	qu.Used.Memory += request.Memory
-	qu.Used.MilliCPU += request.MilliCPU
-	qu.Used.EphemeralStorage += request.EphemeralStorage
-	qu.Used.AllowedPodNumber += request.AllowedPodNumber
-	for name, value := range request.ScalarResources {
-		qu.Used.SetScalar(name, qu.Used.ScalarResources[name]+value)
-	}
+	resconv.AddFwkInPlace(qu.Used, &request)
 }
 
 func (qu *QuotaUsage) unreserveResource(request framework.Resource) {
-	qu.Used.Memory -= request.Memory
-	qu.Used.MilliCPU -= request.MilliCPU
-	qu.Used.EphemeralStorage -= request.EphemeralStorage
-	qu.Used.AllowedPodNumber -= request.AllowedPodNumber
-	for name, value := range request.ScalarResources {
-		qu.Used.SetScalar(name, qu.Used.ScalarResources[name]+value)
-	}
+	resconv.SubtractFwkInPlace(qu.Used, &request)
 }
 
 func (qu *QuotaUsage) wouldPutOverMax(request *framework.Resource) bool {
-	qu.reserveResource(*request)
-	defer qu.unreserveResource(*request)
-
-	return anyGreaterThanOnlyExisting(*qu.Used, *qu.Max)
+	return anyGreaterThanOnlyExisting(*resconv.AddFwk(qu.Used, request), *qu.Max)
 }
 
 func anyGreaterThanOnlyExisting(a framework.Resource, b framework.Resource) bool {
