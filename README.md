@@ -9,3 +9,7 @@ learn and understand the kube-scheduler plugin framework.
 
 ### Prerequisites
 - go version v1.21+ (go toolchains support)
+
+### Run locally
+
+Run `make kind-deploy`.

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+### TODO:
+### Convert to Makefile so we can use `$(GO) tool kind`` and `$(GO) tool kubectl` and `$(GO) tool helm for consistency`.
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 NAME="scheduler-demo"
@@ -18,7 +21,7 @@ kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
 kubectl apply -f "${SCRIPT_DIR}/pc.yaml"
 
 # Load custom scheduler image
-kind load image-archive "${SCRIPT_DIR}/../..//build/image.tar" --name "${NAME}"
+kind load image-archive "${SCRIPT_DIR}/../../build/scheduler-image" --name "${NAME}"
 
 # Deploy custom scheduler
 kubectl apply -k "${SCRIPT_DIR}/scheduler"

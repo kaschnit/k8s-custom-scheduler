@@ -89,7 +89,7 @@ image: generate $(BUILD_DIR) ## Build an image and optionally push it.
 		$(KO) build \
 			--push=$(PUSH) \
 			--platform=linux/$(shell $(GO) env GOARCH) \
-			--tarball=$(BUILD_DIR)/image.tar \
+			--tarball=$(BUILD_DIR)/scheduler-image.tar \
 			--bare \
 			--tags=development \
 			$(CMD)
