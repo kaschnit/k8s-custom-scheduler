@@ -21,7 +21,7 @@ kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
 kubectl apply -f "${SCRIPT_DIR}/pc.yaml"
 
 # Load custom scheduler image
-kind load image-archive "${SCRIPT_DIR}/../../build/scheduler-image" --name "${NAME}"
+kind load image-archive "${SCRIPT_DIR}/../../build/scheduler-image.tar" --name "${NAME}"
 
 # Deploy custom scheduler
 kubectl apply -k "${SCRIPT_DIR}/scheduler"
