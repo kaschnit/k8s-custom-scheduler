@@ -5,7 +5,6 @@ metadata:
   name: high
 value: 1000
 globalDefault: false
-preemptionPolicy: PreemptLowerPriority
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -13,7 +12,6 @@ metadata:
   name: medium
 value: 0
 globalDefault: false
-preemptionPolicy: Never
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -21,4 +19,3 @@ metadata:
   name: low
 value: -1000
 globalDefault: false
-preemptionPolicy: Never

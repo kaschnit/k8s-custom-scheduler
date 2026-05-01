@@ -83,7 +83,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 				"preemptionPolicy", corev1.PreemptNever)
 			return false, "Not eligible to preempt due to preemptionPolicy=Never."
 		case corev1.PreemptLowerPriority: // Preemption allowed
-		case "": // Preemption allowed (default is PreemptLowerPriority)
+		case "": // Preemption allowed; use our annotation-based preemption if unspecified
 		default:
 			logger.Info("Pod is not eligible to preempt because of its preemptionPolicy",
 				"pod", klog.KObj(pod),
