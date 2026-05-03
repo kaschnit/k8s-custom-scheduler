@@ -297,15 +297,16 @@ func (plugin *Plugin) Unreserve(ctx context.Context, state fwk.CycleState, pod *
 // EventsToRegister implements [framework.EnqueueExtensions].
 func (plugin *Plugin) EventsToRegister(context.Context) ([]fwk.ClusterEventWithHint, error) {
 	// Return the events that may cause pods that this plugin failed to becomes schedulable.
+	// This seems like it might have a bug related which causes events to not move pods off of the
+	// unschedulable queue.
+	// See: https://github.com/kubernetes/kubernetes/issues/110175
+	// See: https://github.com/kubernetes/kubernetes/issues/87850
 	return []fwk.ClusterEventWithHint{
-		// Deletion of a pod may cause previously unschedulable pods to become schedulable.
+		// Changes to a pod may cause previously unschedulable pods to become schedulable.
 		{
 			Event: fwk.ClusterEvent{
 				Resource:   fwk.Pod,
-				ActionType: fwk.All,
-			},
-			QueueingHintFn: func(_ klog.Logger, _ *corev1.Pod, oldObj, newObj any) (fwk.QueueingHint, error) {
-				return fwk.Queue, nil
+				ActionType: fwk.Update | fwk.Delete,
 			},
 		},
 		// TODO: Add cluster event for quotas if we make quotas dynamic.
