@@ -92,13 +92,6 @@ func (qm *Manager) QueueIter() iter.Seq[*Queue] {
 
 // AddPodIfNotPresent adds the pod to the quota if the pod has a quota.
 func (qm *Manager) AddPodIfNotPresent(pod *corev1.Pod) error {
-	qm.Lock()
-	defer qm.Unlock()
-
-	return qm.addPodIfNotPresentNoLock(pod)
-}
-
-func (qm *Manager) addPodIfNotPresentNoLock(pod *corev1.Pod) error {
 	if pod == nil {
 		return nil
 	}
@@ -108,6 +101,9 @@ func (qm *Manager) addPodIfNotPresentNoLock(pod *corev1.Pod) error {
 		// Ignore pod if it has no queue, it will not be tracked.
 		return nil
 	}
+
+	qm.Lock()
+	defer qm.Unlock()
 
 	q := qm.GetByName(queueName)
 	if q == nil {
@@ -121,13 +117,6 @@ func (qm *Manager) addPodIfNotPresentNoLock(pod *corev1.Pod) error {
 
 // DeletePodIfPresent removes the pod to the quota if the pod has a quota.
 func (qm *Manager) DeletePodIfPresent(pod *corev1.Pod) error {
-	qm.Lock()
-	defer qm.Unlock()
-
-	return qm.deletePodIfPresentNoLock(pod)
-}
-
-func (qm *Manager) deletePodIfPresentNoLock(pod *corev1.Pod) error {
 	if pod == nil {
 		return nil
 	}
@@ -137,6 +126,9 @@ func (qm *Manager) deletePodIfPresentNoLock(pod *corev1.Pod) error {
 		// Ignore pod if it has no queue, it will not be tracked.
 		return nil
 	}
+
+	qm.Lock()
+	defer qm.Unlock()
 
 	q := qm.GetByName(queueName)
 	if q == nil {
