@@ -21,7 +21,7 @@ import (
 type Map[K comparable, V Value[V]] struct {
 	// data is the underlying map.
 	// This is copied on write if there's more than 1 reference.
-	data map[K]*sharedValue[V]
+	data map[K]*RCValue[V]
 	// lock synchronizes access to shared.
 	lock sync.RWMutex
 }
@@ -29,7 +29,7 @@ type Map[K comparable, V Value[V]] struct {
 // NewMap creates a new [Map].
 func NewMap[K comparable, V Value[V]]() *Map[K, V] {
 	return &Map[K, V]{
-		data: make(map[K]*sharedValue[V]),
+		data: make(map[K]*RCValue[V]),
 	}
 }
 
@@ -46,14 +46,18 @@ func (rcm *Map[K, V]) Get(key K) (V, bool) {
 		return zero, false
 	}
 
-	return val.get(), true
+	return val.Get(), true
 }
 
 // Put associates the value with the key.
 // It overwrites the existing value if the key exists.
 // If the key does not exist it creates a new key/value pair.
+//
+// IMPORTANT: If val is a pointer or has internal pointers, the caller should not modify it
+// after calling Put(). Doing so may give unexpected results. Ideally, the caller should not
+// hang onto any references to val after calling Put().
 func (rcm *Map[K, V]) Put(key K, val V) {
-	newVal := newSharedValue(val)
+	newVal := NewRCValue(val)
 
 	rcm.lock.Lock()
 	defer rcm.lock.Unlock()
@@ -93,7 +97,7 @@ func (rcm *Map[K, V]) All() iter.Seq2[K, V] {
 		// Safe to do without lock, because any other reference to the underlying map
 		// will cause rc>1, so writes will cause a copy of the underlying map.
 		for k, v := range rcmClone.data {
-			if !yield(k, v.get()) {
+			if !yield(k, v.Get()) {
 				return
 			}
 		}
@@ -110,7 +114,7 @@ func (rcm *Map[K, V]) Values() iter.Seq[V] {
 		// Safe to do without lock, because any other reference to the underlying map
 		// will cause rc>1, so writes will cause a copy of the underlying map.
 		for _, v := range rcmClone.data {
-			if !yield(v.get()) {
+			if !yield(v.Get()) {
 				return
 			}
 		}
@@ -128,7 +132,7 @@ func (rcm *Map[K, V]) ShareCount(key K) int64 {
 		return 0
 	}
 
-	return val.refCount()
+	return val.RefCount()
 }
 
 // Clear clears the map.
@@ -140,13 +144,13 @@ func (rcm *Map[K, V]) Clear() {
 		v.detach()
 	}
 
-	rcm.data = make(map[K]*sharedValue[V])
+	rcm.data = make(map[K]*RCValue[V])
 }
 
 // Clone creates a clone of the map.
 func (rcm *Map[K, V]) Clone() *Map[K, V] {
 	rcm.lock.Lock()
-	clonedData := make(map[K]*sharedValue[V], len(rcm.data))
+	clonedData := make(map[K]*RCValue[V], len(rcm.data))
 	for k, v := range rcm.data {
 		clonedData[k] = v.fork()
 	}
@@ -164,7 +168,7 @@ func (rcm *Map[K, V]) ToMap() map[K]V {
 
 	result := make(map[K]V, len(rcmClone.data))
 	for k, v := range rcmClone.data {
-		result[k] = v.get()
+		result[k] = v.Get()
 	}
 
 	return result

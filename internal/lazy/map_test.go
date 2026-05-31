@@ -2,414 +2,364 @@ package lazy_test
 
 import (
 	"fmt"
-	"math/rand"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/kaschnit/kaschnit-scheduler/internal/lazy"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TODO: these tests are not good.
-// They are both outdated (old data model) and LLM slop.
-// Update unit tests for better validation.
-
-type testData struct {
-	a          int
-	b          string
-	cloneCount int
+// mockItem implements Value[mockItem]. It wraps a pointer to a struct
+// so we can explicitly track if mutations affect shared instances.
+type mockItem struct {
+	data *itemData
 }
 
-func (td *testData) Clone() *testData {
-	return &testData{
-		a:          td.a,
-		b:          td.b,
-		cloneCount: td.cloneCount + 1,
+type itemData struct {
+	val int
+}
+
+func newMockItem(v int) *mockItem {
+	return &mockItem{data: &itemData{val: v}}
+}
+
+func (m *mockItem) Clone() *mockItem {
+	return &mockItem{
+		data: &itemData{val: m.data.val},
 	}
 }
 
-func TestMapBasicLogic(t *testing.T) {
-	t.Run("basic crud operations on single generation", func(t *testing.T) {
-		rcm := lazy.NewMap[string, *testData]()
+func TestMap_BasicCRUD(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
 
-		// Get on empty map
-		val, found := rcm.Get("non-existent")
-		assert.False(t, found)
-		assert.Nil(t, val)
+	// Test Put and Get
+	m.Put("a", newMockItem(1))
+	val, ok := m.Get("a")
+	require.True(t, ok)
+	assert.Equal(t, 1, val.data.val)
 
-		// Put and immediate Get
-		data := &testData{a: 42, b: "root"}
-		rcm.Put("key1", data)
-		val, found = rcm.Get("key1")
-		assert.True(t, found)
-		assert.Equal(t, 42, val.a)
-		// Not cloned yet, and only 1 reference.
-		assert.Equal(t, 0, val.cloneCount)
-		assert.Equal(t, int64(1), rcm.ShareCount("key1"))
+	// Test ShareCount for single reference
+	assert.Equal(t, int64(1), m.ShareCount("a"))
 
-		// Update existing key
-		rcm.Put("key1", &testData{a: 99, b: "updated"})
-		val, _ = rcm.Get("key1")
-		assert.Equal(t, 99, val.a)
+	// Test Update
+	m.Put("a", newMockItem(2))
+	val, ok = m.Get("a")
+	require.True(t, ok)
+	assert.Equal(t, 2, val.data.val)
 
-		// Delete check
-		assert.True(t, rcm.Delete("key1"))
-		// Second delete is no-op
-		assert.False(t, rcm.Delete("key1"))
-	})
-	t.Run("lazy evaluation boundary on read", func(t *testing.T) {
-		rcm1 := lazy.NewMap[string, *testData]()
-		rcm1.Put("k1", &testData{a: 10, b: "init"})
-
-		// Read from rcm1. We initially put k1 in rcm1, so it never gets cloned when reading rcm1.
-		rcm1K1Val, _ := rcm1.Get("k1")
-		assert.Equal(t, 0, rcm1K1Val.cloneCount)
-		assert.Equal(t, int64(1), rcm1.ShareCount("k1"))
-
-		rcm2 := rcm1.Clone()
-
-		// Write to rcm2 to force copy-on-write, but no deep clone of k1 yet.
-		rcm2.Put("k2", &testData{a: 20, b: "unrelated"})
-		assert.Equal(t, int64(2), rcm1.ShareCount("k1"))
-		assert.Equal(t, int64(2), rcm2.ShareCount("k1"))
-
-		// Read again from rcm1. There are now 2 references to k1, so it gets cloned.
-		rcm1K1Val, _ = rcm1.Get("k1")
-		assert.Equal(t, 1, rcm1K1Val.cloneCount)
-		assert.Equal(t, int64(1), rcm1.ShareCount("k1"))
-
-		// Read from rcm2. It should not clone since there is only 1 reference.
-		rcm2K1Val, _ := rcm2.Get("k1")
-		assert.Equal(t, 0, rcm2K1Val.cloneCount)
-		assert.Equal(t, int64(1), rcm2.ShareCount("k1"))
-
-		// Ensure memory spaces are isolated
-		rcm1K1Val.a = 999
-		assert.Equal(t, 10, rcm2K1Val.a, "Mutating data in generation 1 should not affect generation 2")
-	})
-	t.Run("nested deep-cloning generations lineage", func(t *testing.T) {
-		rcm1 := lazy.NewMap[string, *testData]()
-		rcm1.Put("quota", &testData{a: 100}) // Generation 0 (cloned: true)
-
-		rcm2 := rcm1.Clone()               // RefCount = 2
-		rcm2.Put("unrelated", &testData{}) // Forces map fork. "quota" forks to (cloned: false)
-
-		rcm3 := rcm2.Clone()             // rcm2 and rcm3 now share the forked map. RefCount = 2
-		rcm3.Put("another", &testData{}) // Forces another map fork. "quota" forks AGAIN to (cloned: false)
-
-		// Read from Gen 3. It must execute exactly 1 clone from Gen 2's value state.
-		v3, _ := rcm3.Get("quota")
-		assert.Equal(t, 1, v3.cloneCount)
-		assert.Equal(t, int64(1), rcm3.ShareCount("quota"))
-
-		// Read from Gen 2. It must execute its own clone independently.
-		v2, _ := rcm2.Get("quota")
-		assert.Equal(t, 1, v2.cloneCount)
-		assert.Equal(t, int64(1), rcm2.ShareCount("quota"))
-
-		// Gen 1 remains completely un-cloned.
-		v1, _ := rcm1.Get("quota")
-		assert.Equal(t, 0, v1.cloneCount)
-	})
-	t.Run("iterator mutation isolation during execution", func(t *testing.T) {
-		rcm := lazy.NewMap[string, *testData]()
-		rcm.Put("k1", &testData{a: 1})
-		rcm.Put("k2", &testData{a: 2})
-
-		// This simulates a background quota monitor modifying the primary map
-		// while the scheduler cycle is actively looping over a snapshot iterator.
-		for k, v := range rcm.All() {
-			if k == "k1" {
-				// Modify active map mid-iteration
-				rcm.Put("k1", &testData{a: 999})
-				// Delete structural key mid-iteration
-				rcm.Delete("k2")
-			}
-
-			// The iterator stream must reflect the snapshot state from when All() was called.
-			if k == "k1" {
-				assert.Equal(t, 1, v.a, "Iterator value must remain isolated from concurrent Put")
-			}
-			if k == "k2" {
-				assert.Equal(t, 2, v.a, "Iterator key must remain visible despite concurrent Delete")
-			}
-		}
-	})
-	t.Run("mid-flight iterator snapshotting race", func(t *testing.T) {
-		t.Parallel()
-
-		rcm := lazy.NewMap[string, *testData]()
-		for i := range 100 {
-			rcm.Put(fmt.Sprintf("k-%d", i), &testData{a: i})
-		}
-
-		var wg sync.WaitGroup
-		var stopSignal int32
-
-		// Worker Group A: Constantly spinning up iterators and reading values
-		for range 5 {
-			wg.Go(func() {
-				for atomic.LoadInt32(&stopSignal) == 0 {
-					for _, v := range rcm.All() {
-						_ = v.a // Force evaluation execution
-					}
-				}
-			})
-		}
-
-		// Worker Group B: Constantly snapshotting/cloning and clearing handles
-		for c := 0; c < 3; c++ {
-			wg.Go(func() {
-				for atomic.LoadInt32(&stopSignal) == 0 {
-					clonedHandle := rcm.Clone()
-					// Do a quick operation on the clone
-					_, _ = clonedHandle.Get("k-50")
-					clonedHandle.Clear()
-				}
-			})
-		}
-
-		time.Sleep(100 * time.Millisecond)
-		atomic.StoreInt32(&stopSignal, 1)
-		wg.Wait()
-	})
-	t.Run("original map write value isolation", func(t *testing.T) {
-		// 1. Original writer (Gen 0) creates a queue map and sets a baseline
-		rcm0 := lazy.NewMap[string, *testData]()
-		rcm0.Put("shared-queue", &testData{a: 100})
-
-		// 2. A snapshot (Gen 1) is taken (e.g., inside PreFilter)
-		rcm1 := rcm0.Clone()
-
-		// Both maps currently track a ValueShareCount of 2 for this element
-		assert.Equal(t, int64(2), rcm0.ShareCount("shared-queue"))
-		assert.Equal(t, int64(2), rcm1.ShareCount("shared-queue"))
-
-		// 3. The ORIGINAL writer (Gen 0) continues processing and calls Get()
-		// to update its own active tracking state.
-		itemGen0, found := rcm0.Get("shared-queue")
-		assert.True(t, found)
-
-		// CRITICAL FIX VERIFICATION:
-		// Even though rcmGen0 was the original creator of this wrapper, it must recognize
-		// that a snapshot now relies on this data (ValueShareCount was 2).
-		// Calling Get() must force Gen 0 to decouple itself.
-		assert.Equal(t, int64(1), rcm0.ShareCount("shared-queue"), "Gen 0 failed to isolate its wrapper handle after a clone was taken!")
-		assert.Equal(t, int64(1), rcm1.ShareCount("shared-queue"), "Gen 1's snapshot wrapper reference count was corrupted by Gen 0's read")
-
-		// 4. Gen 0 performs a mutation on its newly isolated instance
-		itemGen0.a = 500
-
-		// 5. Assert that the snapshot (Gen 1) remains perfectly preserved at 100
-		itemGen1, _ := rcm1.Get("shared-queue")
-		assert.Equal(t, 100, itemGen1.a, "BUG: Original writer (Gen 0) mutated data out from underneath an active snapshot (Gen 1)!")
-		assert.Equal(t, 500, itemGen0.a, "Original writer should have successfully updated its own isolated copy")
-	})
+	// Test Delete
+	assert.True(t, m.Delete("a"), "Expected first Delete to return true")
+	_, ok = m.Get("a")
+	assert.False(t, ok, "Expected key to be deleted")
+	assert.False(t, m.Delete("a"), "Expected subsequent Delete to return false")
 }
 
-func TestMapConcurrency(t *testing.T) {
-	t.Run("concurrent read-read contention on shared un-cloned wrappers", func(t *testing.T) {
-		t.Parallel()
+func TestMap_LazyCloneAndIsolation(t *testing.T) {
+	m1 := lazy.NewMap[string, *mockItem]()
+	m1.Put("key", newMockItem(100))
 
-		// Scenario: Dozens of workers read from different snapshot handles that
-		// share the exact same un-cloned lazyClone pointer. This fiercely stress-tests
-		// lazyClone.lock serialization when cloned == false.
-		rcmRoot := lazy.NewMap[string, *testData]()
-		rcmRoot.Put("quota-key", &testData{a: 5000})
+	// Clone the map
+	m2 := m1.Clone()
 
-		const workerCount = 50
-		clones := make([]*lazy.Map[string, *testData], workerCount)
-		for i := range workerCount {
-			clones[i] = rcmRoot.Clone()
+	// Both maps should initially point to the exact same underlying itemData instance,
+	// and the share count should reflect both references.
+	assert.Equal(t, int64(2), m1.ShareCount("key"))
+
+	// Call Get on m2. This triggers DetachIfShared inside get(), cloning the value.
+	v2, ok := m2.Get("key")
+	require.True(t, ok, "Failed to get key from m2")
+
+	// Ensure m1's copy still has its original count or has safely adapted
+	assert.Equal(t, int64(1), m1.ShareCount("key"))
+	assert.Equal(t, int64(1), m2.ShareCount("key"))
+
+	// Mutate m2's item data. It should not affect m1.
+	v2.data.val = 999
+
+	v1, ok := m1.Get("key")
+	require.True(t, ok)
+	assert.Equal(t, 100, v1.data.val, "Isolation broken! m1 value was mutated")
+}
+
+func TestMap_IteratorsAndToMap(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
+	m.Put("a", newMockItem(1))
+	m.Put("b", newMockItem(2))
+
+	// Test ToMap
+	goMap := m.ToMap()
+	if assert.Len(t, goMap, 2) {
+		assert.Equal(t, 1, goMap["a"].data.val)
+		assert.Equal(t, 2, goMap["b"].data.val)
+	}
+
+	// Test All() iterator
+	count := 0
+	for k, v := range m.All() {
+		count++
+		if k == "a" {
+			assert.Equal(t, 1, v.data.val)
 		}
+	}
+	assert.Equal(t, 2, count)
 
-		var wg sync.WaitGroup
-		wg.Add(workerCount)
+	// Test Clear
+	m.Clear()
+	assert.Empty(t, m.ToMap())
+}
 
-		// Start all read operations at roughly the same time
-		for i := range workerCount {
-			go func(idx int) {
-				defer wg.Done()
-				val, found := clones[idx].Get("quota-key")
-				if assert.True(t, found) {
-					assert.Equal(t, 5000, val.a)
-				}
-			}(i)
-		}
-		wg.Wait()
+func TestMap_DeepCloneChainCascadingGet(t *testing.T) {
+	const chainDepth = 10
+	chains := make([]*lazy.Map[string, *mockItem], chainDepth)
 
-		// The root element must have been safely mutated to cloned: true by exactly ONE
-		// of the threads, and the total clone count across all generations must match
-		// the lazy expectations.
-		rootVal, _ := rcmRoot.Get("quota-key")
-		assert.Equal(t, 0, rootVal.cloneCount, "Root map data should remain un-cloned on read")
+	chains[0] = lazy.NewMap[string, *mockItem]()
+	chains[0].Put("heavy", newMockItem(100))
 
-		for i := range workerCount {
-			clones[i].Clear()
+	for i := 1; i < chainDepth; i++ {
+		chains[i] = chains[i-1].Clone()
+	}
+
+	// Verify reference count stacked up correctly
+	assert.Equal(t, int64(chainDepth), chains[0].ShareCount("heavy"))
+
+	var wg sync.WaitGroup
+	// Simultaneous reads across the entire lineage of clones
+	for i := range chainDepth {
+		wg.Go(func() {
+			val, ok := chains[i].Get("heavy")
+			if assert.True(t, ok) {
+				assert.Equal(t, 100, val.data.val)
+			}
+		})
+	}
+	wg.Wait()
+
+	// After all gets resolve, every single instance should be perfectly isolated (Count = 1)
+	for i := range chainDepth {
+		assert.Equal(t, int64(1), chains[i].ShareCount("heavy"))
+	}
+}
+
+func TestMap_OverwriteIsolationInvariant(t *testing.T) {
+	m1 := lazy.NewMap[string, *mockItem]()
+	m1.Put("k", newMockItem(10))
+
+	m2 := m1.Clone()
+
+	// Overwrite the key in m1 with a totally new item.
+	// This detaches the old sharedValue wrapper from m1.
+	m1.Put("k", newMockItem(20))
+
+	// Trigger a lazy clone on m2 by reading it
+	v2, ok := m2.Get("k")
+	require.True(t, ok)
+	assert.Equal(t, 10, v2.data.val)
+
+	// Verify m1 has the new value completely independently
+	v1, ok := m1.Get("k")
+	require.True(t, ok)
+	assert.Equal(t, 20, v1.data.val)
+}
+
+func TestMap_ConcurrentReadsAndWrites(t *testing.T) {
+	m := lazy.NewMap[int, *mockItem]()
+	const workers = 10
+	const iterations = 500
+
+	var wg sync.WaitGroup
+
+	// Concurrent Writers
+	for i := range workers {
+		wg.Go(func() {
+			for j := range iterations {
+				key := (i * iterations) + j
+				m.Put(key, newMockItem(key))
+			}
+		})
+	}
+
+	// Concurrent Readers interacting with whatever is available
+	for range workers {
+		wg.Go(func() {
+			for j := range iterations {
+				// Random reads across possible keyspace
+				m.Get(j)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	// Verify final total count matching expectations
+	finalMap := m.ToMap()
+	assert.Len(t, finalMap, workers*iterations)
+}
+
+func TestMap_ConcurrentCloningAndReads(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
+	m.Put("shared", newMockItem(42))
+
+	const readers = 20
+	const iterations = 200
+	var wg sync.WaitGroup
+
+	// Thread triggering maps to frequently clone
+	wg.Go(func() {
+		for range iterations {
+			_ = m.Clone()
 		}
 	})
-	t.Run("fork vs get interleaved execution race", func(t *testing.T) {
-		t.Parallel()
 
-		// Scenario: A heavy master writer constantly triggers COW forks via Put/Delete
-		// on one handle, while multiple background readers aggressively call Get()
-		// on a separate snapshot generation handle.
-		rcmActive := lazy.NewMap[string, *testData]()
+	// Concurrent readers trying to read and lazily evaluate the same underlying objects
+	for i := range readers {
+		wg.Go(func() {
+			for range iterations {
+				val, ok := m.Get("shared")
+				if assert.True(t, ok, "Reader %d failed to find 'shared' key", i) {
+					assert.Equal(t, 42, val.data.val, "Reader %d hit data corruption", i)
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+}
+
+func TestMap_ConcurrentIteratorIsolation(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
+	for i := range 100 {
+		m.Put(fmt.Sprintf("key_%d", i), newMockItem(i))
+	}
+
+	var wg sync.WaitGroup
+
+	// Loop calling iterators while other loops actively mutate the map
+	wg.Go(func() {
+		for range 50 {
+			for range m.All() {
+				// Just consuming iterator to trigger cloning and reading loops
+			}
+		}
+	})
+
+	// Parallel Mutator modifying the original map structure
+	wg.Go(func() {
 		for i := range 100 {
-			rcmActive.Put(fmt.Sprintf("key-%d", i), &testData{a: i})
+			m.Put(fmt.Sprintf("key_%d", i), newMockItem(i*10))
+			m.Delete(fmt.Sprintf("key_del_%d", i))
 		}
+	})
 
-		snapshot := rcmActive.Clone() // Freeze generation state
+	wg.Wait()
+}
 
-		var stopSignal atomic.Int32
-		var wg sync.WaitGroup
+func TestMap_ConcurrentValuesIterator(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
+	for i := range 50 {
+		m.Put(fmt.Sprintf("key_%d", i), newMockItem(i))
+	}
 
-		// 1. Launch Reader Group reading strictly from the static snapshot
-		const readerCount = 5
-		wg.Add(readerCount)
-		for r := range readerCount {
-			go func(readerID int) {
-				defer wg.Done()
-				for stopSignal.Load() == 0 {
-					// Read across keys unpredictably to force random lazy-clone evaluations
-					targetKey := fmt.Sprintf("key-%d", (readerID*17)%100)
-					val, found := snapshot.Get(targetKey)
-					if found {
-						// Ensure data isolation: values must never be corrupted by active writer updates
-						assert.True(t, val.a >= 0 && val.a < 100)
-					}
-				}
-			}(r)
+	var wg sync.WaitGroup
+
+	// Test the completely missing Values() API concurrently
+	wg.Go(func() {
+		for range 50 {
+			for range m.Values() {
+				// Exercise Values() iterator loop
+			}
 		}
+	})
 
-		// 2. Active writer pipeline constantly hammering map mutations
+	// Parallel Mutator doing Puts and Deletes
+	wg.Go(func() {
+		for i := range 50 {
+			m.Put(fmt.Sprintf("key_%d", i), newMockItem(i*2))
+		}
+	})
+
+	wg.Wait()
+}
+
+func TestMap_ConcurrentClearAndReads(t *testing.T) {
+	m := lazy.NewMap[int, *mockItem]()
+
+	var wg sync.WaitGroup
+
+	// Continuous Writers and Clearers
+	wg.Go(func() {
+		for range 100 {
+			for j := range 10 {
+				m.Put(j, newMockItem(j))
+			}
+			m.Clear() // Aggressively clearing while readers read
+		}
+	})
+
+	// Continuous Readers and ToMap exporters
+	wg.Go(func() {
+		for range 100 {
+			for j := range 10 {
+				_, _ = m.Get(j)
+			}
+			_ = m.ToMap()
+		}
+	})
+
+	wg.Wait()
+}
+
+func TestMap_ConcurrentGetOnMultipleClones(t *testing.T) {
+	m := lazy.NewMap[string, *mockItem]()
+	m.Put("target", newMockItem(777))
+
+	// Create many clones that all share the exact same underlying ref counter
+	const cloneCount = 20
+	clones := make([]*lazy.Map[string, *mockItem], cloneCount)
+	for i := range cloneCount {
+		clones[i] = m.Clone()
+	}
+
+	var wg sync.WaitGroup
+
+	// Simulating multiple threads trying to lazily clone the *same* item
+	// from *different* map instances at the exact same time.
+	for i := range cloneCount {
 		wg.Go(func() {
-			for iteration := range 200 {
-				// Alternating writes and deletes triggers continuous map structural forks
-				rcmActive.Put(fmt.Sprintf("new-key-%d", iteration), &testData{a: iteration})
-				rcmActive.Delete(fmt.Sprintf("key-%d", iteration%100))
+			val, ok := clones[i].Get("target")
+			if assert.True(t, ok) {
+				assert.Equal(t, 777, val.data.val)
 			}
 		})
+	}
 
-		// Let the chaos run for a moment
-		time.Sleep(50 * time.Millisecond)
-		stopSignal.Store(1)
-		wg.Wait()
+	wg.Wait()
+}
 
-		// Clean up snapshots
-		snapshot.Clear()
-	})
-	t.Run("chaotic multi-generation snapshot and read stress", func(t *testing.T) {
-		t.Parallel()
+func TestMap_ConcurrentIteratorPassiveBreak(t *testing.T) {
+	m := lazy.NewMap[int, *mockItem]()
+	for i := range 100 {
+		m.Put(i, newMockItem(i))
+	}
 
-		const (
-			maxGenerations = 30
-			readersPerGen  = 10
-		)
+	var wg sync.WaitGroup
 
-		// An array holding active historical snapshot generations as they are created
-		var generations sync.Map // Map[int]*lazy.Map[string, *testData]
-
-		// Seed the root map (Gen 0)
-		rcmRoot := lazy.NewMap[string, *testData]()
-		rcmRoot.Put("global-limit", &testData{a: 1000, b: "gen-0"})
-		rcmRoot.Put("shared-quota", &testData{a: 500, b: "gen-0"})
-		generations.Store(0, rcmRoot)
-
-		var wg sync.WaitGroup
-		var stopSignal int32
-		var activeGenIdx int32 // Monotonically increasing generation index
-
-		// 1. PIPELINE WORKER: Active Lineage Creator
-		// Simulates the scheduler advancing cycles, taking a snapshot of the previous cycle,
-		// and mutating configuration limits/ephemeral states.
-		wg.Go(func() {
-			// Seed a source map pointer
-			currentSource := rcmRoot
-
-			for gen := 1; gen < maxGenerations; gen++ {
-				if atomic.LoadInt32(&stopSignal) == 1 {
-					return
-				}
-
-				// Create the next snapshot layer
-				nextGenMap := currentSource.Clone()
-
-				// Apply mutations unique to this generation handle
-				nextGenMap.Put("global-limit", &testData{a: 1000 + gen, b: fmt.Sprintf("gen-%d", gen)})
-				nextGenMap.Put(fmt.Sprintf("ephemeral-%d", gen), &testData{a: gen, b: "temp"})
-
-				// Expose this generation to the reading pool
-				generations.Store(gen, nextGenMap)
-				atomic.StoreInt32(&activeGenIdx, int32(gen))
-
-				// Move pointer forward for next nested clone loop iteration
-				currentSource = nextGenMap
-
-				// Control generation pacing (forces readers to span old and new handles concurrently)
-				time.Sleep(10 * time.Millisecond)
+	// Worker breaking out of iterators early
+	wg.Go(func() {
+		for range 50 {
+			for range m.All() {
+				break // Intentional early break to trigger deferred Clear()
 			}
-		})
-
-		// Wait slightly to let at least 2 generations spawn before setting readers loose
-		time.Sleep(5 * time.Millisecond)
-
-		// 2. PIPELINE WORKERS: Reader Pool (Hammering different generations)
-		// Spawns readers assigned to random active historical generations. They aggressively
-		// verify cross-talk isolation while elements are fork-cloned underneath them.
-		totalReaders := maxGenerations * readersPerGen
-		wg.Add(totalReaders)
-
-		for i := range totalReaders {
-			go func(workerID int) {
-				defer wg.Done()
-
-				r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerID)))
-
-				for atomic.LoadInt32(&stopSignal) == 0 {
-					currentMax := atomic.LoadInt32(&activeGenIdx)
-					if currentMax == 0 {
-						continue
-					}
-
-					// Pick a random generation currently alive in the system
-					targetGen := r.Intn(int(currentMax) + 1)
-
-					genVal, ok := generations.Load(targetGen)
-					if !ok {
-						continue
-					}
-					targetMap := genVal.(*lazy.Map[string, *testData])
-
-					// Action A: Read the heavily overwritten key
-					limit, found := targetMap.Get("global-limit")
-					if found {
-						assert.Equal(t, 1000+targetGen, limit.a)
-						assert.Equal(t, fmt.Sprintf("gen-%d", targetGen), limit.b)
-					}
-
-					// Action B: Read the untouched cascaded key ("shared-quota")
-					// This key cascades through all generations un-mutated. Reading it triggers
-					// lazy evaluations across multiple threads simultaneously on shared forked wrappers.
-					quota, foundQuota := targetMap.Get("shared-quota")
-					if foundQuota {
-						assert.Equal(t, 500, quota.a)
-					}
-
-					// Action C: Read ephemeral keys
-					_, foundEphem := targetMap.Get(fmt.Sprintf("ephemeral-%d", targetGen))
-					if targetGen > 0 {
-						assert.True(t, foundEphem, "Gen %d must have its own ephemeral key visible", targetGen)
-					}
-				}
-			}(i)
 		}
-
-		// Let the structural chaos run to completion
-		time.Sleep(150 * time.Millisecond)
-		atomic.StoreInt32(&stopSignal, 1)
-		wg.Wait()
 	})
+
+	// Concurrent mutator modifying the data being iterated over
+	wg.Go(func() {
+		for j := range 50 {
+			m.Put(j, newMockItem(j*10))
+			m.Delete(j + 50)
+		}
+	})
+
+	wg.Wait()
 }
