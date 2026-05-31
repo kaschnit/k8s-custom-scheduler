@@ -80,10 +80,12 @@ func (qm *Manager) Update(name string, opts ...QueueOption) {
 	q.ApplyOpts(opts...)
 }
 
+// Delete deletes the queue from the manager.
 func (qm *Manager) Delete(name string) {
 	qm.queueByName.Delete(name)
 }
 
+// QueueIter returns an sequence to iterate over each queue.
 func (qm *Manager) QueueIter() iter.Seq[*Queue] {
 	return qm.queueByName.Values()
 }
