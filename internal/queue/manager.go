@@ -21,11 +21,10 @@ var (
 
 // Manager manages queues.
 type Manager struct {
-	sync.Mutex
-
 	// queueByName are the queues indexed by name.
 	// We use a lazy map for fast snapshotting of the quota.
 	queueByName *lazy.Map[string, *Queue]
+	lock        sync.Mutex
 }
 
 // NewManager creates a new [Manager].
@@ -68,8 +67,8 @@ func (qm *Manager) Update(name string, opts ...QueueOption) {
 		return
 	}
 
-	qm.Lock()
-	defer qm.Unlock()
+	qm.lock.Lock()
+	defer qm.lock.Unlock()
 
 	q := qm.GetByName(name)
 	if q == nil {
@@ -102,8 +101,8 @@ func (qm *Manager) AddPodIfNotPresent(pod *corev1.Pod) error {
 		return nil
 	}
 
-	qm.Lock()
-	defer qm.Unlock()
+	qm.lock.Lock()
+	defer qm.lock.Unlock()
 
 	q := qm.GetByName(queueName)
 	if q == nil {
@@ -127,8 +126,8 @@ func (qm *Manager) DeletePodIfPresent(pod *corev1.Pod) error {
 		return nil
 	}
 
-	qm.Lock()
-	defer qm.Unlock()
+	qm.lock.Lock()
+	defer qm.lock.Unlock()
 
 	q := qm.GetByName(queueName)
 	if q == nil {
