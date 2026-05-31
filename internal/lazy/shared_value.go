@@ -55,7 +55,9 @@ func (lc *sharedValue[V]) fork() *sharedValue[V] {
 }
 
 func (lc *sharedValue[V]) detach() {
+	lc.lock.Lock()
 	lc.rc.Lock()
 	lc.rc.count--
 	lc.rc.Unlock()
+	lc.lock.Unlock()
 }

@@ -38,9 +38,9 @@ func NewMap[K comparable, V Value[V]]() *Map[K, V] {
 // Returns zero-value and false if not found.
 func (rcm *Map[K, V]) Get(key K) (V, bool) {
 	rcm.lock.RLock()
-	defer rcm.lock.RUnlock()
-
 	val, ok := rcm.data[key]
+	rcm.lock.RUnlock()
+
 	if !ok {
 		var zero V
 		return zero, false
@@ -53,11 +53,17 @@ func (rcm *Map[K, V]) Get(key K) (V, bool) {
 // It overwrites the existing value if the key exists.
 // If the key does not exist it creates a new key/value pair.
 func (rcm *Map[K, V]) Put(key K, val V) {
-	sharedVal := newSharedValue(val)
+	newVal := newSharedValue(val)
 
 	rcm.lock.Lock()
-	rcm.data[key] = sharedVal
-	rcm.lock.Unlock()
+	defer rcm.lock.Unlock()
+
+	existingVal, exists := rcm.data[key]
+	if exists {
+		existingVal.detach()
+	}
+
+	rcm.data[key] = newVal
 }
 
 // Delete deletes the value associated with the key from the map.
@@ -66,12 +72,12 @@ func (rcm *Map[K, V]) Delete(key K) bool {
 	rcm.lock.Lock()
 	defer rcm.lock.Unlock()
 
-	val, exists := rcm.data[key]
+	existingVal, exists := rcm.data[key]
 	if !exists {
 		return false
 	}
 
-	val.detach()
+	existingVal.detach()
 	delete(rcm.data, key)
 
 	return true
@@ -128,10 +134,11 @@ func (rcm *Map[K, V]) ShareCount(key K) int64 {
 // Clear clears the map.
 func (rcm *Map[K, V]) Clear() {
 	rcm.lock.Lock()
+	defer rcm.lock.Unlock()
+
 	for _, v := range rcm.data {
 		v.detach()
 	}
-	rcm.lock.Unlock()
 
 	rcm.data = make(map[K]*sharedValue[V])
 }
