@@ -26,15 +26,9 @@ func (lc *sharedValue[V]) get() V {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
-	lc.rc.Lock()
-	if lc.rc.count > 1 {
-		lc.rc.count--
-		lc.rc.Unlock()
-
+	if detached := lc.rc.DetachIfShared(); detached {
 		lc.value = lc.value.Clone()
 		lc.rc = NewRefCounter()
-	} else {
-		lc.rc.Unlock()
 	}
 
 	return lc.value
@@ -44,9 +38,7 @@ func (lc *sharedValue[V]) fork() *sharedValue[V] {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
-	lc.rc.Lock()
-	lc.rc.count++
-	lc.rc.Unlock()
+	lc.rc.Attach()
 
 	return &sharedValue[V]{
 		value: lc.value,
@@ -56,8 +48,7 @@ func (lc *sharedValue[V]) fork() *sharedValue[V] {
 
 func (lc *sharedValue[V]) detach() {
 	lc.lock.Lock()
-	lc.rc.Lock()
-	lc.rc.count--
-	lc.rc.Unlock()
-	lc.lock.Unlock()
+	defer lc.lock.Unlock()
+
+	lc.rc.Detach()
 }
