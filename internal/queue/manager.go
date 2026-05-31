@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/kaschnit/kaschnit-scheduler/apis/scheduling"
-	"github.com/kaschnit/kaschnit-scheduler/internal/cow"
+	"github.com/kaschnit/kaschnit-scheduler/internal/lazy"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -24,14 +24,14 @@ type Manager struct {
 	sync.Mutex
 
 	// queueByName are the queues indexed by name.
-	// We use a copy-on-write map for fast snapshotting of the quota.
-	queueByName *cow.Map[string, *Queue]
+	// We use a lazy map for fast snapshotting of the quota.
+	queueByName *lazy.Map[string, *Queue]
 }
 
 // NewManager creates a new [Manager].
 func NewManager() *Manager {
 	return &Manager{
-		queueByName: cow.NewMap[string, *Queue](),
+		queueByName: lazy.NewMap[string, *Queue](),
 	}
 }
 
