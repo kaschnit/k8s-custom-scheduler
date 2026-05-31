@@ -145,6 +145,8 @@ func (rcm *Map[K, V]) Clear() {
 }
 
 // Clone creates a clone of the map.
+// This only creates a shallow clone, but can be treated as a deep clone
+// because shared values are cloned when read.
 func (rcm *Map[K, V]) Clone() *Map[K, V] {
 	rcm.lock.Lock()
 	clonedData := make(map[K]*SharedValue[V], len(rcm.data))
