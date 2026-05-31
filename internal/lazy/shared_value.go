@@ -2,24 +2,24 @@ package lazy
 
 import "sync"
 
-// RCValue is a reference-counted value.
+// SharedValue is a reference-counted shared value.
 // All exported methods are thread-safe.
-type RCValue[V Value[V]] struct {
+type SharedValue[V Value[V]] struct {
 	value V
 	rc    *RefCounter
 	lock  sync.Mutex
 }
 
-// NewRCValue creates a new [RCValue].
-func NewRCValue[V Value[V]](value V) *RCValue[V] {
-	return &RCValue[V]{
+// NewSharedValue creates a new [SharedValue].
+func NewSharedValue[V Value[V]](value V) *SharedValue[V] {
+	return &SharedValue[V]{
 		value: value,
 		rc:    NewRefCounter(),
 	}
 }
 
 // RefCount returns the number of references to lc's value.
-func (lc *RCValue[V]) RefCount() int64 {
+func (lc *SharedValue[V]) RefCount() int64 {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
@@ -27,7 +27,9 @@ func (lc *RCValue[V]) RefCount() int64 {
 }
 
 // Get gets lc's value.
-func (lc *RCValue[V]) Get() V {
+// This clones the value if it has more than 1 reference.
+// If cloned, the number of references is reset to 1.
+func (lc *SharedValue[V]) Get() V {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
@@ -39,19 +41,19 @@ func (lc *RCValue[V]) Get() V {
 	return lc.value
 }
 
-func (lc *RCValue[V]) fork() *RCValue[V] {
+func (lc *SharedValue[V]) fork() *SharedValue[V] {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
 	lc.rc.Inc()
 
-	return &RCValue[V]{
+	return &SharedValue[V]{
 		value: lc.value,
 		rc:    lc.rc,
 	}
 }
 
-func (lc *RCValue[V]) detach() {
+func (lc *SharedValue[V]) detach() {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 

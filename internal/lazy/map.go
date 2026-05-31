@@ -21,7 +21,7 @@ import (
 type Map[K comparable, V Value[V]] struct {
 	// data is the underlying map.
 	// This is copied on write if there's more than 1 reference.
-	data map[K]*RCValue[V]
+	data map[K]*SharedValue[V]
 	// lock synchronizes access to shared.
 	lock sync.RWMutex
 }
@@ -29,7 +29,7 @@ type Map[K comparable, V Value[V]] struct {
 // NewMap creates a new [Map].
 func NewMap[K comparable, V Value[V]]() *Map[K, V] {
 	return &Map[K, V]{
-		data: make(map[K]*RCValue[V]),
+		data: make(map[K]*SharedValue[V]),
 	}
 }
 
@@ -57,13 +57,12 @@ func (rcm *Map[K, V]) Get(key K) (V, bool) {
 // after calling Put(). Doing so may give unexpected results. Ideally, the caller should not
 // hang onto any references to val after calling Put().
 func (rcm *Map[K, V]) Put(key K, val V) {
-	newVal := NewRCValue(val)
+	newVal := NewSharedValue(val)
 
 	rcm.lock.Lock()
 	defer rcm.lock.Unlock()
 
-	existingVal, exists := rcm.data[key]
-	if exists {
+	if existingVal, exists := rcm.data[key]; exists {
 		existingVal.detach()
 	}
 
@@ -76,15 +75,13 @@ func (rcm *Map[K, V]) Delete(key K) bool {
 	rcm.lock.Lock()
 	defer rcm.lock.Unlock()
 
-	existingVal, exists := rcm.data[key]
-	if !exists {
-		return false
+	if existingVal, exists := rcm.data[key]; exists {
+		existingVal.detach()
+		delete(rcm.data, key)
+		return true
 	}
 
-	existingVal.detach()
-	delete(rcm.data, key)
-
-	return true
+	return false
 }
 
 // All returns an iterator over key-value pairs.
@@ -144,13 +141,13 @@ func (rcm *Map[K, V]) Clear() {
 		v.detach()
 	}
 
-	rcm.data = make(map[K]*RCValue[V])
+	rcm.data = make(map[K]*SharedValue[V])
 }
 
 // Clone creates a clone of the map.
 func (rcm *Map[K, V]) Clone() *Map[K, V] {
 	rcm.lock.Lock()
-	clonedData := make(map[K]*RCValue[V], len(rcm.data))
+	clonedData := make(map[K]*SharedValue[V], len(rcm.data))
 	for k, v := range rcm.data {
 		clonedData[k] = v.fork()
 	}
