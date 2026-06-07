@@ -145,3 +145,9 @@ func (qm *Manager) Clone() *Manager {
 		queueByName: qm.queueByName.Clone(),
 	}
 }
+
+// Close closes the [Manager].
+// Manager should not be used after close.
+func (qm *Manager) Close() {
+	qm.queueByName.Clear()
+}

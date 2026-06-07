@@ -111,7 +111,7 @@ func (plugin *Plugin) PreFilter(
 
 	stateMgr := NewStateManager(state)
 	requestedRes := alloc.FromPodReq(pod)
-	qSnapshot := &QueueSnapshotState{QueueMgr: plugin.queueMgr.Clone()}
+	qSnapshot := NewQueueSnapshotState(plugin.queueMgr)
 	// Defer because below code may modify the snapshot's queueMgr.
 	// Ensure we wait to write the state until we have made all modifications.
 	defer stateMgr.WriteQueueSnapshot(qSnapshot)
@@ -229,6 +229,14 @@ func (plugin *Plugin) PostFilter(
 
 	defer metrics.PreemptionAttempts.Inc()
 
+	// Close queue snapshot to clean up.
+	// After PostFilter (scheduling failed), it will not be used anymore in this cycle.
+	defer func() {
+		if err := NewStateManager(state).CloseQueueSnapshot(); err != nil {
+			logger.Error(err, "Failed to close queue snapshot")
+		}
+	}()
+
 	evaluator := preemption.NewEvaluator(
 		plugin.Name(),
 		plugin.fh,
@@ -262,9 +270,7 @@ func (plugin *Plugin) AddPod(
 		"podToSchedule", klog.KObj(podToSchedule),
 		"podToAdd", klog.KObj(podInfoToAdd.GetPod()))
 
-	stateMgr := NewStateManager(state)
-
-	quotaSnapshot, err := stateMgr.ReadQueueSnapshot()
+	quotaSnapshot, err := NewStateManager(state).ReadQueueSnapshot()
 	if err != nil {
 		logger.Error(err, "Failed to read quotaSnapshotState from cycleState")
 		return fwk.NewStatus(fwk.Error, err.Error())
@@ -290,9 +296,7 @@ func (plugin *Plugin) RemovePod(
 		"podToSchedule", klog.KObj(podToSchedule),
 		"podToRemove", klog.KObj(podInfoToRemove.GetPod()))
 
-	stateMgr := NewStateManager(state)
-
-	quotaSnapshot, err := stateMgr.ReadQueueSnapshot()
+	quotaSnapshot, err := NewStateManager(state).ReadQueueSnapshot()
 	if err != nil {
 		logger.Error(err, "Failed to read quotaSnapshotState from cycleState")
 		return fwk.NewStatus(fwk.Error, err.Error())
@@ -310,6 +314,14 @@ func (plugin *Plugin) Reserve(ctx context.Context, state fwk.CycleState, pod *co
 	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger)).WithValues(
 		"extensionPoint", "Reserve",
 		"pod", klog.KObj(pod))
+
+	// Close queue snapshot to clean up.
+	// After Reserve (scheduling succeeded), it will not be used anymore in this cycle.
+	defer func() {
+		if err := NewStateManager(state).CloseQueueSnapshot(); err != nil {
+			logger.Error(err, "Failed to close queue snapshot")
+		}
+	}()
 
 	if err := plugin.queueMgr.AddPodIfNotPresent(pod); err != nil {
 		logger.Error(err, "Failed to add Pod to its associated queue quota")
