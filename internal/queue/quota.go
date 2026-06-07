@@ -16,16 +16,16 @@ type Quota struct {
 	Max alloc.Resources
 	// Used is the used resources.
 	Used alloc.Resources
-	// PodsByName are pods that currently contribute to quota.
-	PodsByName map[types.UID]*corev1.Pod
+	// PodsByID are pods that currently contribute to quota.
+	PodsByID map[types.UID]*corev1.Pod
 }
 
 // NewQuota creates a new [Quota].
 func NewQuota(max alloc.Resources) *Quota {
 	return &Quota{
-		Max:        max,
-		Used:       make(alloc.Resources),
-		PodsByName: make(map[types.UID]*corev1.Pod),
+		Max:      max,
+		Used:     make(alloc.Resources),
+		PodsByID: make(map[types.UID]*corev1.Pod),
 	}
 }
 
@@ -35,9 +35,9 @@ func (q *Quota) AddPodIfNotPresent(pod *corev1.Pod) {
 		return
 	}
 
-	_, wasTrackingPod := q.PodsByName[pod.UID]
+	_, wasTrackingPod := q.PodsByID[pod.UID]
 
-	q.PodsByName[pod.UID] = pod
+	q.PodsByID[pod.UID] = pod
 
 	if !wasTrackingPod {
 		q.Used.Add(alloc.FromPodReq(pod))
@@ -50,8 +50,8 @@ func (q *Quota) DeletePodIfPresent(pod *corev1.Pod) {
 		return
 	}
 
-	if _, wasTrackingPod := q.PodsByName[pod.UID]; wasTrackingPod {
-		delete(q.PodsByName, pod.UID)
+	if _, wasTrackingPod := q.PodsByID[pod.UID]; wasTrackingPod {
+		delete(q.PodsByID, pod.UID)
 		q.Used.Sub(alloc.FromPodReq(pod))
 	}
 }
@@ -59,7 +59,7 @@ func (q *Quota) DeletePodIfPresent(pod *corev1.Pod) {
 // DeletePodsFunc deletes the pods matching the predicate from the quota.
 // The entire set of the quota's pods is iterated and checked against the predicate.
 func (q *Quota) DeletePodsFunc(predicate func(*corev1.Pod) bool) {
-	for _, otherPod := range q.PodsByName {
+	for _, otherPod := range q.PodsByID {
 		if predicate(otherPod) {
 			q.DeletePodIfPresent(otherPod)
 		}
@@ -68,7 +68,7 @@ func (q *Quota) DeletePodsFunc(predicate func(*corev1.Pod) bool) {
 
 // ContainsPod returns true if the pod is counted towards the quota.
 func (q *Quota) ContainsPod(pod *corev1.Pod) bool {
-	_, ok := q.PodsByName[pod.UID]
+	_, ok := q.PodsByID[pod.UID]
 	return ok
 }
 
@@ -81,7 +81,7 @@ func (q *Quota) WouldPutOverMax(request alloc.Resources) bool {
 // Clone clones the [Quota].
 func (q *Quota) Clone() *Quota {
 	newQuotaUsage := &Quota{
-		PodsByName: maps.Clone(q.PodsByName),
+		PodsByID: maps.Clone(q.PodsByID),
 	}
 
 	if q.Max != nil {
@@ -98,7 +98,7 @@ func (q *Quota) Clone() *Quota {
 func (q *Quota) String() string {
 	const maxPodSamples = 3
 	podSamples := make([]string, 0, maxPodSamples)
-	for _, pod := range q.PodsByName {
+	for _, pod := range q.PodsByID {
 		if len(podSamples) >= maxPodSamples {
 			break
 		}
@@ -109,12 +109,12 @@ func (q *Quota) String() string {
 	}
 
 	var podsSummary string
-	if len(q.PodsByName) == 0 {
+	if len(q.PodsByID) == 0 {
 		podsSummary = "[]"
-	} else if len(q.PodsByName) <= maxPodSamples {
+	} else if len(q.PodsByID) <= maxPodSamples {
 		podsSummary = fmt.Sprintf("[%s]", strings.Join(podSamples, ", "))
 	} else {
-		podsSummary = fmt.Sprintf("[%s, ... (+%d more)]", strings.Join(podSamples, ", "), len(q.PodsByName)-maxPodSamples)
+		podsSummary = fmt.Sprintf("[%s, ... (+%d more)]", strings.Join(podSamples, ", "), len(q.PodsByID)-maxPodSamples)
 	}
 
 	return fmt.Sprintf("{Max: %s, Used: %s, Pods: %s}", q.Max, q.Used, podsSummary)

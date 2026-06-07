@@ -30,8 +30,8 @@ func (m *mockItem) Clone() *mockItem {
 	}
 }
 
-func TestMap_BasicCRUD(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_BasicCRUD(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 
 	// Test Put and Get
 	m.Put("a", newMockItem(1))
@@ -40,7 +40,7 @@ func TestMap_BasicCRUD(t *testing.T) {
 	assert.Equal(t, 1, val.data.val)
 
 	// Test ShareCount for single reference
-	assert.Equal(t, int64(1), m.ShareCount("a"))
+	assert.Equal(t, int64(1), m.RefCount("a"))
 
 	// Test Update
 	m.Put("a", newMockItem(2))
@@ -55,8 +55,8 @@ func TestMap_BasicCRUD(t *testing.T) {
 	assert.False(t, m.Delete("a"), "Expected subsequent Delete to return false")
 }
 
-func TestMap_LazyCloneAndIsolation(t *testing.T) {
-	m1 := lazy.NewMap[string, *mockItem]()
+func TestRefMap_LazyCloneAndIsolation(t *testing.T) {
+	m1 := lazy.NewRefMap[string, *mockItem]()
 	m1.Put("key", newMockItem(100))
 
 	// Clone the map
@@ -64,15 +64,15 @@ func TestMap_LazyCloneAndIsolation(t *testing.T) {
 
 	// Both maps should initially point to the exact same underlying itemData instance,
 	// and the share count should reflect both references.
-	assert.Equal(t, int64(2), m1.ShareCount("key"))
+	assert.Equal(t, int64(2), m1.RefCount("key"))
 
 	// Call Get on m2. This triggers DetachIfShared inside get(), cloning the value.
 	v2, ok := m2.Get("key")
 	require.True(t, ok, "Failed to get key from m2")
 
 	// Ensure m1's copy still has its original count or has safely adapted
-	assert.Equal(t, int64(1), m1.ShareCount("key"))
-	assert.Equal(t, int64(1), m2.ShareCount("key"))
+	assert.Equal(t, int64(1), m1.RefCount("key"))
+	assert.Equal(t, int64(1), m2.RefCount("key"))
 
 	// Mutate m2's item data. It should not affect m1.
 	v2.data.val = 999
@@ -82,8 +82,8 @@ func TestMap_LazyCloneAndIsolation(t *testing.T) {
 	assert.Equal(t, 100, v1.data.val, "Isolation broken! m1 value was mutated")
 }
 
-func TestMap_IteratorsAndToMap(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_IteratorsAndToMap(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 	m.Put("a", newMockItem(1))
 	m.Put("b", newMockItem(2))
 
@@ -109,11 +109,11 @@ func TestMap_IteratorsAndToMap(t *testing.T) {
 	assert.Empty(t, m.ToMap())
 }
 
-func TestMap_DeepCloneChainCascadingGet(t *testing.T) {
+func TestRefMap_DeepCloneChainCascadingGet(t *testing.T) {
 	const chainDepth = 10
-	chains := make([]*lazy.Map[string, *mockItem], chainDepth)
+	chains := make([]*lazy.RefMap[string, *mockItem], chainDepth)
 
-	chains[0] = lazy.NewMap[string, *mockItem]()
+	chains[0] = lazy.NewRefMap[string, *mockItem]()
 	chains[0].Put("heavy", newMockItem(100))
 
 	for i := 1; i < chainDepth; i++ {
@@ -121,7 +121,7 @@ func TestMap_DeepCloneChainCascadingGet(t *testing.T) {
 	}
 
 	// Verify reference count stacked up correctly
-	assert.Equal(t, int64(chainDepth), chains[0].ShareCount("heavy"))
+	assert.Equal(t, int64(chainDepth), chains[0].RefCount("heavy"))
 
 	var wg sync.WaitGroup
 	// Simultaneous reads across the entire lineage of clones
@@ -137,12 +137,12 @@ func TestMap_DeepCloneChainCascadingGet(t *testing.T) {
 
 	// After all gets resolve, every single instance should be perfectly isolated (Count = 1)
 	for i := range chainDepth {
-		assert.Equal(t, int64(1), chains[i].ShareCount("heavy"))
+		assert.Equal(t, int64(1), chains[i].RefCount("heavy"))
 	}
 }
 
-func TestMap_OverwriteIsolationInvariant(t *testing.T) {
-	m1 := lazy.NewMap[string, *mockItem]()
+func TestRefMap_OverwriteIsolationInvariant(t *testing.T) {
+	m1 := lazy.NewRefMap[string, *mockItem]()
 	m1.Put("k", newMockItem(10))
 
 	m2 := m1.Clone()
@@ -162,8 +162,8 @@ func TestMap_OverwriteIsolationInvariant(t *testing.T) {
 	assert.Equal(t, 20, v1.data.val)
 }
 
-func TestMap_ConcurrentReadsAndWrites(t *testing.T) {
-	m := lazy.NewMap[int, *mockItem]()
+func TestRefMap_ConcurrentReadsAndWrites(t *testing.T) {
+	m := lazy.NewRefMap[int, *mockItem]()
 	const workers = 10
 	const iterations = 500
 
@@ -196,8 +196,8 @@ func TestMap_ConcurrentReadsAndWrites(t *testing.T) {
 	assert.Len(t, finalMap, workers*iterations)
 }
 
-func TestMap_ConcurrentCloningAndReads(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_ConcurrentCloningAndReads(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 	m.Put("shared", newMockItem(42))
 
 	const readers = 20
@@ -226,8 +226,8 @@ func TestMap_ConcurrentCloningAndReads(t *testing.T) {
 	wg.Wait()
 }
 
-func TestMap_ConcurrentIteratorIsolation(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_ConcurrentIteratorIsolation(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 	for i := range 100 {
 		m.Put(fmt.Sprintf("key_%d", i), newMockItem(i))
 	}
@@ -254,8 +254,8 @@ func TestMap_ConcurrentIteratorIsolation(t *testing.T) {
 	wg.Wait()
 }
 
-func TestMap_ConcurrentValuesIterator(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_ConcurrentValuesIterator(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 	for i := range 50 {
 		m.Put(fmt.Sprintf("key_%d", i), newMockItem(i))
 	}
@@ -281,8 +281,8 @@ func TestMap_ConcurrentValuesIterator(t *testing.T) {
 	wg.Wait()
 }
 
-func TestMap_ConcurrentClearAndReads(t *testing.T) {
-	m := lazy.NewMap[int, *mockItem]()
+func TestRefMap_ConcurrentClearAndReads(t *testing.T) {
+	m := lazy.NewRefMap[int, *mockItem]()
 
 	var wg sync.WaitGroup
 
@@ -309,13 +309,13 @@ func TestMap_ConcurrentClearAndReads(t *testing.T) {
 	wg.Wait()
 }
 
-func TestMap_ConcurrentGetOnMultipleClones(t *testing.T) {
-	m := lazy.NewMap[string, *mockItem]()
+func TestRefMap_ConcurrentGetOnMultipleClones(t *testing.T) {
+	m := lazy.NewRefMap[string, *mockItem]()
 	m.Put("target", newMockItem(777))
 
 	// Create many clones that all share the exact same underlying ref counter
 	const cloneCount = 20
-	clones := make([]*lazy.Map[string, *mockItem], cloneCount)
+	clones := make([]*lazy.RefMap[string, *mockItem], cloneCount)
 	for i := range cloneCount {
 		clones[i] = m.Clone()
 	}
@@ -336,8 +336,8 @@ func TestMap_ConcurrentGetOnMultipleClones(t *testing.T) {
 	wg.Wait()
 }
 
-func TestMap_ConcurrentIteratorPassiveBreak(t *testing.T) {
-	m := lazy.NewMap[int, *mockItem]()
+func TestRefMap_ConcurrentIteratorPassiveBreak(t *testing.T) {
+	m := lazy.NewRefMap[int, *mockItem]()
 	for i := range 100 {
 		m.Put(i, newMockItem(i))
 	}

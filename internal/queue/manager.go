@@ -23,14 +23,14 @@ var (
 type Manager struct {
 	// queueByName are the queues indexed by name.
 	// We use a lazy map for fast snapshotting of the quota.
-	queueByName *lazy.Map[string, *Queue]
+	queueByName *lazy.RefMap[string, *Queue]
 	lock        sync.Mutex
 }
 
 // NewManager creates a new [Manager].
 func NewManager() *Manager {
 	return &Manager{
-		queueByName: lazy.NewMap[string, *Queue](),
+		queueByName: lazy.NewRefMap[string, *Queue](),
 	}
 }
 

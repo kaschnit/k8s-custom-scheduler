@@ -41,7 +41,8 @@ func (lc *SharedValue[V]) Get() V {
 	return lc.value
 }
 
-func (lc *SharedValue[V]) fork() *SharedValue[V] {
+// Fork makes a copy of the shared value with increased reference count.
+func (lc *SharedValue[V]) Fork() *SharedValue[V] {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
@@ -53,9 +54,13 @@ func (lc *SharedValue[V]) fork() *SharedValue[V] {
 	}
 }
 
-func (lc *SharedValue[V]) detach() {
+// Detach removes the reference to the value.
+func (lc *SharedValue[V]) Detach() {
 	lc.lock.Lock()
 	defer lc.lock.Unlock()
 
 	lc.rc.Dec()
+
+	var zero V
+	lc.value = zero
 }
