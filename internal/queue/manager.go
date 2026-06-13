@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"sync"
 
 	"github.com/kaschnit/kaschnit-scheduler/apis/scheduling"
-	"github.com/kaschnit/kaschnit-scheduler/internal/lazy"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -21,16 +21,14 @@ var (
 
 // Manager manages queues.
 type Manager struct {
-	// queueByName are the queues indexed by name.
-	// We use a lazy map for fast snapshotting of the quota.
-	queueByName *lazy.RefMap[string, *Queue]
-	lock        sync.Mutex
+	queueByName map[string]*Queue
+	lock        sync.RWMutex
 }
 
 // NewManager creates a new [Manager].
 func NewManager() *Manager {
 	return &Manager{
-		queueByName: lazy.NewRefMap[string, *Queue](),
+		queueByName: make(map[string]*Queue),
 	}
 }
 
@@ -50,14 +48,20 @@ func (qm *Manager) Get(pod *corev1.Pod) *Queue {
 	return qm.GetByName(name)
 }
 
+// GetByName gets the queue by name.
 func (qm *Manager) GetByName(name string) *Queue {
-	q, _ := qm.queueByName.Get(name)
-	return q
+	qm.lock.RLock()
+	defer qm.lock.RUnlock()
+
+	return qm.queueByName[name]
 }
 
 // Put creates or updates the quota for the queue.
 func (qm *Manager) Put(name string, opts ...QueueOption) {
-	qm.queueByName.Put(name, New(name, opts...))
+	qm.lock.Lock()
+	defer qm.lock.Unlock()
+
+	qm.queueByName[name] = New(name, opts...)
 }
 
 // Update mutates the queue with the given name.
@@ -70,9 +74,9 @@ func (qm *Manager) Update(name string, opts ...QueueOption) {
 	qm.lock.Lock()
 	defer qm.lock.Unlock()
 
-	q := qm.GetByName(name)
+	q := qm.queueByName[name]
 	if q == nil {
-		qm.Put(name, opts...)
+		qm.queueByName[name] = New(name, opts...)
 		return
 	}
 
@@ -81,12 +85,26 @@ func (qm *Manager) Update(name string, opts ...QueueOption) {
 
 // Delete deletes the queue from the manager.
 func (qm *Manager) Delete(name string) {
-	qm.queueByName.Delete(name)
+	qm.lock.Lock()
+	defer qm.lock.Unlock()
+
+	qm.deleteNoLock(name)
+}
+
+func (qm *Manager) deleteNoLock(name string) {
+	delete(qm.queueByName, name)
 }
 
 // QueueIter returns an sequence to iterate over each queue.
 func (qm *Manager) QueueIter() iter.Seq[*Queue] {
-	return qm.queueByName.Values()
+	return func(yield func(*Queue) bool) {
+		qmClone := qm.Clone()
+		for _, queue := range qmClone.queueByName {
+			if !yield(queue) {
+				return
+			}
+		}
+	}
 }
 
 // AddPodIfNotPresent adds the pod to the quota if the pod has a quota.
@@ -100,9 +118,6 @@ func (qm *Manager) AddPodIfNotPresent(pod *corev1.Pod) error {
 		// Ignore pod if it has no queue, it will not be tracked.
 		return nil
 	}
-
-	qm.lock.Lock()
-	defer qm.lock.Unlock()
 
 	q := qm.GetByName(queueName)
 	if q == nil {
@@ -126,9 +141,6 @@ func (qm *Manager) DeletePodIfPresent(pod *corev1.Pod) error {
 		return nil
 	}
 
-	qm.lock.Lock()
-	defer qm.lock.Unlock()
-
 	q := qm.GetByName(queueName)
 	if q == nil {
 		return fmt.Errorf("%w: queue '%s' does not exist", ErrRemovePodFromQuota, queueName)
@@ -141,13 +153,15 @@ func (qm *Manager) DeletePodIfPresent(pod *corev1.Pod) error {
 
 // Clone creates a clone of the [Manager].
 func (qm *Manager) Clone() *Manager {
-	return &Manager{
-		queueByName: qm.queueByName.Clone(),
-	}
-}
+	qm.lock.RLock()
+	queuesClone := maps.Clone(qm.queueByName)
+	qm.lock.RUnlock()
 
-// Close closes the [Manager].
-// Manager should not be used after close.
-func (qm *Manager) Close() {
-	qm.queueByName.Clear()
+	for name, queue := range queuesClone {
+		queuesClone[name] = queue.Clone()
+	}
+
+	return &Manager{
+		queueByName: queuesClone,
+	}
 }

@@ -164,8 +164,8 @@ func (plugin *Plugin) PreFilter(
 	// logic of PostFilter, we perform preemption again if the nominated node appears "stale" (has
 	// no terminating victims).
 	logger = logger.WithValues(
-		"used", podQ.Quota().Used,
-		"max", podQ.Quota().Max,
+		"used", podQ.Quota().Used(),
+		"max", podQ.Quota().Max(),
 		"requestedRes", requestedRes)
 	exceedsQuota := podQ.Quota().WouldPutOverMax(requestedRes)
 	if len(pod.Status.NominatedNodeName) > 0 && exceedsQuota {
@@ -228,14 +228,6 @@ func (plugin *Plugin) PostFilter(
 	logger.Info("Running PostFilter")
 
 	defer metrics.PreemptionAttempts.Inc()
-
-	// Close queue snapshot to clean up.
-	// After PostFilter (scheduling failed), it will not be used anymore in this cycle.
-	defer func() {
-		if err := NewStateManager(state).CloseQueueSnapshot(); err != nil {
-			logger.Error(err, "Failed to close queue snapshot")
-		}
-	}()
 
 	evaluator := preemption.NewEvaluator(
 		plugin.Name(),
@@ -314,14 +306,6 @@ func (plugin *Plugin) Reserve(ctx context.Context, state fwk.CycleState, pod *co
 	logger := klog.FromContext(klog.NewContext(ctx, plugin.logger)).WithValues(
 		"extensionPoint", "Reserve",
 		"pod", klog.KObj(pod))
-
-	// Close queue snapshot to clean up.
-	// After Reserve (scheduling succeeded), it will not be used anymore in this cycle.
-	defer func() {
-		if err := NewStateManager(state).CloseQueueSnapshot(); err != nil {
-			logger.Error(err, "Failed to close queue snapshot")
-		}
-	}()
 
 	if err := plugin.queueMgr.AddPodIfNotPresent(pod); err != nil {
 		logger.Error(err, "Failed to add Pod to its associated queue quota")

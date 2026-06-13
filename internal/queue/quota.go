@@ -2,10 +2,12 @@ package queue
 
 import (
 	"fmt"
-	"maps"
 	"strings"
+	"sync"
 
+	"github.com/benbjohnson/immutable"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
+	"github.com/kaschnit/kaschnit-scheduler/internal/hashers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -13,92 +15,184 @@ import (
 // Quota tracks the max and available quota.
 type Quota struct {
 	// Max is the available resources.
-	Max alloc.Resources
+	max alloc.Resources
 	// Used is the used resources.
-	Used alloc.Resources
-	// PodsByID are pods that currently contribute to quota.
-	PodsByID map[types.UID]*corev1.Pod
+	used alloc.Resources
+	// podsByID are pods that currently contribute to quota.
+	// Immutable map is used to make clones cheap.
+	podsByID *immutable.Map[types.UID, *corev1.Pod]
+
+	lock sync.RWMutex
 }
 
 // NewQuota creates a new [Quota].
 func NewQuota(max alloc.Resources) *Quota {
 	return &Quota{
-		Max:      max,
-		Used:     make(alloc.Resources),
-		PodsByID: make(map[types.UID]*corev1.Pod),
+		max:      max,
+		used:     make(alloc.Resources),
+		podsByID: immutable.NewMap[types.UID, *corev1.Pod](hashers.StrLike[types.UID]{}),
 	}
 }
 
 // AddPodIfNotPresent adds the pod to the quota if it's not part of the quota.
-func (q *Quota) AddPodIfNotPresent(pod *corev1.Pod) {
-	if pod == nil {
+func (q *Quota) AddPodIfNotPresent(pods ...*corev1.Pod) {
+	if q == nil || len(pods) == 0 {
 		return
 	}
 
-	_, wasTrackingPod := q.PodsByID[pod.UID]
+	q.lock.Lock()
+	defer q.lock.Unlock()
 
-	q.PodsByID[pod.UID] = pod
+	for _, pod := range pods {
+		if pod == nil {
+			continue
+		}
 
-	if !wasTrackingPod {
-		q.Used.Add(alloc.FromPodReq(pod))
+		if _, exists := q.podsByID.Get(pod.UID); !exists {
+			q.podsByID = q.podsByID.Set(pod.UID, pod)
+			q.used.Add(alloc.FromPodReq(pod))
+		}
 	}
 }
 
 // DeletePodIfPresent removes the pod from the quota if it's part of the quota.
-func (q *Quota) DeletePodIfPresent(pod *corev1.Pod) {
-	if pod == nil {
+func (q *Quota) DeletePodIfPresent(pods ...*corev1.Pod) {
+	if q == nil || len(pods) == 0 {
 		return
 	}
 
-	if _, wasTrackingPod := q.PodsByID[pod.UID]; wasTrackingPod {
-		delete(q.PodsByID, pod.UID)
-		q.Used.Sub(alloc.FromPodReq(pod))
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	for _, pod := range pods {
+		if pod == nil {
+			continue
+		}
+
+		if _, exists := q.podsByID.Get(pod.UID); exists {
+			q.podsByID = q.podsByID.Delete(pod.UID)
+			q.used.Sub(alloc.FromPodReq(pod))
+		}
 	}
 }
 
 // DeletePodsFunc deletes the pods matching the predicate from the quota.
 // The entire set of the quota's pods is iterated and checked against the predicate.
 func (q *Quota) DeletePodsFunc(predicate func(*corev1.Pod) bool) {
-	for _, otherPod := range q.PodsByID {
+	if q == nil || predicate == nil {
+		return
+	}
+
+	var victims []*corev1.Pod
+
+	q.lock.RLock()
+	podsByID := q.podsByID
+	q.lock.RUnlock()
+
+	for itr := podsByID.Iterator(); !itr.Done(); {
+		_, otherPod, _ := itr.Next()
 		if predicate(otherPod) {
-			q.DeletePodIfPresent(otherPod)
+			victims = append(victims, otherPod)
 		}
 	}
+
+	q.DeletePodIfPresent(victims...)
+}
+
+// Max gets the max quota.
+func (q *Quota) Max() alloc.Resources {
+	if q == nil {
+		return nil
+	}
+
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	return q.max
+}
+
+// SetMax sets the max quota to the provided max.
+func (q *Quota) SetMax(max alloc.Resources) {
+	if q == nil {
+		return
+	}
+
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	q.max = max
+}
+
+// Used gets the used quota.
+func (q *Quota) Used() alloc.Resources {
+	if q == nil {
+		return nil
+	}
+
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	return q.used
 }
 
 // ContainsPod returns true if the pod is counted towards the quota.
 func (q *Quota) ContainsPod(pod *corev1.Pod) bool {
-	_, ok := q.PodsByID[pod.UID]
+	if q == nil {
+		return false
+	}
+
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	_, ok := q.podsByID.Get(pod.UID)
 	return ok
 }
 
 // WouldPutOverMax returns true if request would put the quota over its max
 // when added to the used amount.
 func (q *Quota) WouldPutOverMax(request alloc.Resources) bool {
-	return q.Used.Plus(request).AnyGreaterIntersecting(q.Max)
+	if q == nil {
+		// No max on q if q is nil.
+		return false
+	}
+
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	return q.used.Plus(request).AnyGreaterIntersecting(q.max)
 }
 
 // Clone clones the [Quota].
 func (q *Quota) Clone() *Quota {
-	newQuotaUsage := &Quota{
-		PodsByID: maps.Clone(q.PodsByID),
+	if q == nil {
+		return nil
 	}
 
-	if q.Max != nil {
-		newQuotaUsage.Max = q.Max.Clone()
-	}
-	if q.Used != nil {
-		newQuotaUsage.Used = q.Used.Clone()
-	}
+	q.lock.RLock()
+	defer q.lock.RUnlock()
 
-	return newQuotaUsage
+	return &Quota{
+		podsByID: q.podsByID,
+		max:      q.max.Clone(),
+		used:     q.used.Clone(),
+	}
 }
 
 // String converts q to a string representation.
 func (q *Quota) String() string {
+	return q.Clone().stringNoLock()
+}
+
+func (q *Quota) stringNoLock() string {
+	if q == nil {
+		return "<nil>"
+	}
+
 	const maxPodSamples = 3
 	podSamples := make([]string, 0, maxPodSamples)
-	for _, pod := range q.PodsByID {
+	for itr := q.podsByID.Iterator(); !itr.Done(); {
+		_, pod, _ := itr.Next()
+
 		if len(podSamples) >= maxPodSamples {
 			break
 		}
@@ -109,13 +203,13 @@ func (q *Quota) String() string {
 	}
 
 	var podsSummary string
-	if len(q.PodsByID) == 0 {
+	if q.podsByID.Len() == 0 {
 		podsSummary = "[]"
-	} else if len(q.PodsByID) <= maxPodSamples {
+	} else if q.podsByID.Len() <= maxPodSamples {
 		podsSummary = fmt.Sprintf("[%s]", strings.Join(podSamples, ", "))
 	} else {
-		podsSummary = fmt.Sprintf("[%s, ... (+%d more)]", strings.Join(podSamples, ", "), len(q.PodsByID)-maxPodSamples)
+		podsSummary = fmt.Sprintf("[%s, ... (+%d more)]", strings.Join(podSamples, ", "), q.podsByID.Len()-maxPodSamples)
 	}
 
-	return fmt.Sprintf("{Max: %s, Used: %s, Pods: %s}", q.Max, q.Used, podsSummary)
+	return fmt.Sprintf("{Max: %s, Used: %s, Pods: %s}", q.max, q.used, podsSummary)
 }

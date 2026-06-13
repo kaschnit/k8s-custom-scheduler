@@ -334,8 +334,8 @@ func (p *preemptor) SelectVictimsOnNode(
 		// not eligible for preemption (i.e. has no eligible victims).
 		logger.Info("Preemptor does not fit quota after removing potential victims from node",
 			"requested", requestedRes,
-			"used", preemptorQ.Quota().Used,
-			"max", preemptorQ.Quota().Max)
+			"used", preemptorQ.Quota().Used(),
+			"max", preemptorQ.Quota().Max())
 		return nil, 0, fwk.NewStatus(fwk.Unschedulable,
 			fmt.Sprintf("Not eligible for preemption because queue exceeds after preemption (quota=%s)",
 				preemptorQ.Quota()))

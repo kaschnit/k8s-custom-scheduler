@@ -105,8 +105,8 @@ func (syn *Synchronizer) statusUpdateLoop(ctx context.Context) {
 				statusPatch := schedv1.Queue{
 					Status: schedv1.QueueStatus{
 						Quota: schedv1.QueueQuotaStatus{
-							EffectiveMax: clusterTotalRes.TakeMinExisting(q.Quota().Max).ToResourceList(),
-							Used:         q.Quota().Used.ToResourceList(),
+							EffectiveMax: clusterTotalRes.TakeMinExisting(q.Quota().Max()).ToResourceList(),
+							Used:         q.Quota().Used().ToResourceList(),
 						},
 					},
 				}
