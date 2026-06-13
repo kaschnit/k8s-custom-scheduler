@@ -333,9 +333,6 @@ func (plugin *Plugin) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWit
 	// unschedulable queue.
 	// See: https://github.com/kubernetes/kubernetes/issues/110175
 	// See: https://github.com/kubernetes/kubernetes/issues/87850
-	schedv1QuotaGVK := fmt.Sprintf("queues.%s.%s",
-		schedv1.SchemeGroupVersion.Version,
-		schedv1.SchemeGroupVersion.Group)
 	return []fwk.ClusterEventWithHint{
 		// Changes to a pod may cause previously unschedulable pods to become schedulable.
 		{
@@ -349,7 +346,7 @@ func (plugin *Plugin) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWit
 		},
 		{
 			Event: fwk.ClusterEvent{
-				Resource:   fwk.EventResource(schedv1QuotaGVK),
+				Resource:   fwk.EventResource(schedv1.QueueFQRN),
 				ActionType: fwk.All,
 			},
 			QueueingHintFn: func(logger klog.Logger, pod *corev1.Pod, oldObj, newObj interface{}) (fwk.QueueingHint, error) {
