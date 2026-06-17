@@ -3,6 +3,7 @@ package immut_test
 import (
 	"fmt"
 	"iter"
+	"sync"
 	"testing"
 
 	"github.com/kaschnit/kaschnit-scheduler/internal/immut"
@@ -66,20 +67,20 @@ func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
 
 	snapshots := make([]*immut.Map[int, int], count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		m = m.Put(i, i*10)
 		snapshots[i] = m
 	}
 
 	// Assert everything can be fetched perfectly from final state
-	for i := 0; i < count; i++ {
+	for i := range count {
 		val, found := m.Get(i)
 		assert.True(t, found)
 		assert.Equal(t, i*10, val)
 	}
 
 	// Verify timeline integrity (no cross-contamination across updates)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		snap := snapshots[i]
 		_, found := snap.Get(i + 1)
 		assert.False(t, found, "Snapshot timeline leak: snap %d can see key %d", i, i+1)
@@ -150,15 +151,142 @@ func TestMap_NodeCollapsingCanonicalInvariants(t *testing.T) {
 func TestMap_MaxDepthFullHashCollisionRouting(t *testing.T) {
 	m := immut.NewMap[string, int]()
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		key := fmt.Sprintf("CollisionKeyPrefix-%d", i)
 		m = m.Put(key, i)
 	}
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		key := fmt.Sprintf("CollisionKeyPrefix-%d", i)
 		val, found := m.Get(key)
 		assert.True(t, found)
 		assert.Equal(t, i, val)
 	}
+}
+
+func TestMap_TotalBranchDrainToEmptyLeakPrevention(t *testing.T) {
+	m := immut.NewMap[string, int]()
+
+	// Build up a nested branch depth
+	m = m.Put("Alpha", 100)
+	m = m.Put("Beta", 200)
+
+	// Verify existence
+	_, fA := m.Get("Alpha")
+	_, fB := m.Get("Beta")
+	assert.True(t, fA)
+	assert.True(t, fB)
+
+	// Completely delete everything along that sub-path branch
+	m = m.Delete("Alpha")
+	m = m.Delete("Beta")
+
+	// Ensure structural iteration returns absolutely zero dangling components
+	pairs := collectSeq2(m.All())
+	assert.Empty(t, pairs, "Expected tree to be structurally empty, but elements or dead nodes leaked out")
+}
+
+func TestMap_ZeroValueStorageIntegrity(t *testing.T) {
+	m := immut.NewMap[string, int]()
+
+	// Put explicit integer zero values
+	m = m.Put("ZeroKey", 0)
+
+	val, found := m.Get("ZeroKey")
+	assert.True(t, found, "Expected explicitly added zero value key to be found")
+	assert.Equal(t, 0, val, "Stored zero value was altered or corrupted")
+
+	// Validate with a map containing pointer/interface types or empty strings
+	mStr := immut.NewMap[string, string]().Put("EmptyStrKey", "")
+	strVal, strFound := mStr.Get("EmptyStrKey")
+	assert.True(t, strFound)
+	assert.Equal(t, "", strVal)
+}
+
+func TestMap_ConcurrentReadsAndIsolatedWrites(t *testing.T) {
+	// 1. Build a pristine baseline map.
+	// Once initialized, this specific instance is NEVER updated globally.
+	baselineMap := immut.NewMap[string, int]()
+	itemCount := 500
+
+	for i := range itemCount {
+		baselineMap = baselineMap.Put(fmt.Sprintf("key-%d", i), i*10)
+	}
+
+	var wg sync.WaitGroup
+	numWorkers := 20
+
+	// Worker Group 1: Pure Readers
+	// Every thread simultaneously reads from the exact same baseline map instance.
+	// This proves the Get() path handles zero-lock concurrent reads without memory races.
+	for w := range numWorkers {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for i := range itemCount {
+				targetKey := fmt.Sprintf("key-%d", i)
+				val, found := baselineMap.Get(targetKey)
+
+				assert.True(t, found, "Worker %d lost key %s", workerID, targetKey)
+				assert.Equal(t, i*10, val)
+			}
+		}(w)
+	}
+
+	// Worker Group 2: Concurrent Iterators
+	// Simultaneously ranges over the same baseline structure to verify bitmap read safety.
+	for w := range 5 {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for range 10 {
+				localCount := 0
+				for k, v := range baselineMap.All() {
+					localCount++
+					if k == "" {
+						t.Errorf("Worker %d found corrupt empty key", workerID)
+					}
+					_ = v
+				}
+				assert.Equal(t, itemCount, localCount)
+			}
+		}(w)
+	}
+
+	// Worker Group 3: Isolated Mutators
+	// Each worker derives its own independent extensions from the baseline map.
+	// This proves that structural path-copying leaves the shared ancestral nodes undamaged.
+	for w := range numWorkers {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			// Start from the shared baseline
+			localMap := baselineMap
+
+			// Append worker-specific keys unique to this thread
+			for i := range 50 {
+				uniqueKey := fmt.Sprintf("worker-%d-private-%d", workerID, i)
+				localMap = localMap.Put(uniqueKey, workerID)
+			}
+
+			// Verify the worker's private keys exist in its isolated universe
+			for i := range 50 {
+				uniqueKey := fmt.Sprintf("worker-%d-private-%d", workerID, i)
+				val, found := localMap.Get(uniqueKey)
+				assert.True(t, found)
+				assert.Equal(t, workerID, val)
+			}
+
+			// CRITICAL SANITY CHECK: Verify the shared baseline map
+			// was NOT cross-contaminated by this worker's writes.
+			for i := range 50 {
+				uniqueKey := fmt.Sprintf("worker-%d-private-%d", workerID, i)
+				_, found := baselineMap.Get(uniqueKey)
+				assert.False(t, found, "Isolation Leak: Private worker key escaped into baseline map")
+			}
+		}(w)
+	}
+
+	wg.Wait()
 }
