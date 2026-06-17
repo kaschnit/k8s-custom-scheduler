@@ -19,7 +19,7 @@ func generateKeys(count int) []string {
 }
 
 func BenchmarkMap_Put(b *testing.B) {
-	sizes := []int{10, 100, 1000}
+	sizes := []int{10, 100, 1000, 10000}
 
 	for _, size := range sizes {
 		keys := generateKeys(size)
@@ -52,7 +52,7 @@ func BenchmarkMap_Put(b *testing.B) {
 }
 
 func BenchmarkMap_Get(b *testing.B) {
-	sizes := []int{10, 100, 1000}
+	sizes := []int{10, 100, 1000, 10000}
 
 	for _, size := range sizes {
 		keys := generateKeys(size)

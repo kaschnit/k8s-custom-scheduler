@@ -4,13 +4,9 @@ import (
 	"cmp"
 	"hash/maphash"
 	"math/bits"
-	"slices"
 )
 
 const (
-	// champBranchingFactor is the branching factor of the CHAMP.
-	// The branching factor is the maximum nodes per level.
-	champBranchingFactor = 64
 	// champBranchingFactorBits is the number of bits needed to represent a branching
 	// factor of 64. It is 6 because we need 6 bits to represent 64 items.
 	champBranchingFactorBits = 6
@@ -34,25 +30,6 @@ type champNode[K cmp.Ordered, V any] struct {
 	childMap uint64
 	entries  []champEntry[K, V]
 	children []*champNode[K, V]
-}
-
-// clone creates a clone of the node.
-func (node *champNode[K, V]) clone() *champNode[K, V] {
-	nodeClone := &champNode[K, V]{
-		entryMap: node.entryMap,
-		childMap: node.childMap,
-	}
-
-	if len(node.entries) > 0 {
-		nodeClone.entries = make([]champEntry[K, V], len(node.entries))
-		copy(nodeClone.entries, node.entries)
-	}
-	if len(node.children) > 0 {
-		nodeClone.children = make([]*champNode[K, V], len(node.children))
-		copy(nodeClone.children, node.children)
-	}
-
-	return nodeClone
 }
 
 func (node *champNode[K, V]) get(key K, hash uint64, depth int) (V, bool) {
@@ -105,7 +82,13 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		// Check for existing entry to overwrite.
 		for i := range node.entries {
 			if node.entries[i].Key == key {
-				result := node.clone()
+				result := &champNode[K, V]{
+					entryMap: node.entryMap,
+					childMap: node.childMap,
+					children: node.children,
+					entries:  make([]champEntry[K, V], len(node.entries)),
+				}
+				copy(result.entries, node.entries)
 				result.entries[i].Value = value
 				return result
 			}
@@ -119,9 +102,18 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 				break
 			}
 		}
-		result := node.clone()
-		result.entries = slices.Insert(result.entries, entryIndex, champEntry[K, V]{Key: key, Value: value})
-		return result
+
+		newEntries := make([]champEntry[K, V], len(node.entries)+1)
+		copy(newEntries[:entryIndex], node.entries[:entryIndex])
+		newEntries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
+		copy(newEntries[entryIndex+1:], node.entries[entryIndex:])
+
+		return &champNode[K, V]{
+			entryMap: node.entryMap,
+			childMap: node.childMap,
+			children: node.children,
+			entries:  newEntries,
+		}
 	}
 
 	bitmapPos := champBitmapPos(hash, depth)
@@ -137,30 +129,42 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		existingEntry := node.entries[entryIndex]
 		if existingEntry.Key == key {
 			// Overwrite entry (not a collision).
-			result := node.clone()
-			result.entryMap |= bitmapPos
+			result := &champNode[K, V]{
+				entryMap: node.entryMap,
+				childMap: node.childMap,
+				children: node.children,
+				entries:  make([]champEntry[K, V], len(node.entries)),
+			}
+			copy(result.entries, node.entries)
 			result.entries[entryIndex].Value = value
 			return result
 		}
 
-		result := node.clone()
+		// Split existing entry into a child branch:
+		// 1. The entry is removed from entries, so new length is len - 1
+		newEntries := make([]champEntry[K, V], len(node.entries)-1)
+		copy(newEntries[:entryIndex], node.entries[:entryIndex])
+		copy(newEntries[entryIndex:], node.entries[entryIndex+1:])
 
-		// Move entry to child (collision).
-		// Split existing and new colliding entry to child
+		// 2. A new child node is added, so new children length is len + 1
 		child := &champNode[K, V]{}
 		child = child.insert(existingEntry.Key, maphash.Comparable(hashSeed, existingEntry.Key), existingEntry.Value, depth+1, hashSeed)
 		child = child.insert(key, hash, value, depth+1, hashSeed)
 
-		// Remove entry since it was moved to child
-		result.entryMap &= ^bitmapPos
-		result.entries = slices.Delete(result.entries, entryIndex, entryIndex+1)
+		newChildMap := node.childMap | bitmapPos
+		childIndex := champIndex(newChildMap, bitmapPos)
 
-		// Add child since we created a new child
-		result.childMap |= bitmapPos
-		childIndex := champIndex(result.childMap, bitmapPos)
-		result.children = slices.Insert(result.children, childIndex, child)
+		newChildren := make([]*champNode[K, V], len(node.children)+1)
+		copy(newChildren[:childIndex], node.children[:childIndex])
+		newChildren[childIndex] = child
+		copy(newChildren[childIndex+1:], node.children[childIndex:])
 
-		return result
+		return &champNode[K, V]{
+			entryMap: node.entryMap & ^bitmapPos,
+			childMap: newChildMap,
+			entries:  newEntries,
+			children: newChildren,
+		}
 	}
 
 	// Check for child.
@@ -169,28 +173,58 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		// Child exists.
 		childIndex := champIndex(node.childMap, bitmapPos)
 		child := node.children[childIndex].insert(key, hash, value, depth+1, hashSeed)
-		result := node.clone()
-		result.children[childIndex] = child
-		return result
+
+		// Mutating an existing child path: structural sharing for entries,
+		// and we only allocate a new children slice of the exact same size to update the pointer.
+		newChildren := make([]*champNode[K, V], len(node.children))
+		copy(newChildren, node.children)
+		newChildren[childIndex] = child
+
+		return &champNode[K, V]{
+			entryMap: node.entryMap,
+			childMap: node.childMap,
+			entries:  node.entries,
+			children: newChildren,
+		}
 	}
 
 	// Child does not exist.
-	// Create entry
-	result := node.clone()
-	result.entryMap |= bitmapPos
-	entryIndex := champIndex(result.entryMap, bitmapPos)
-	result.entries = slices.Insert(result.entries, entryIndex, champEntry[K, V]{Key: key, Value: value})
+	// Create entry.
+	// Slot is completely empty: entries length increases by 1, children is shared.
+	entryIndex := champIndex(node.entryMap, bitmapPos)
+	newEntryMap := node.entryMap | bitmapPos
 
-	return result
+	newEntries := make([]champEntry[K, V], len(node.entries)+1)
+	copy(newEntries[:entryIndex], node.entries[:entryIndex])
+	newEntries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
+	copy(newEntries[entryIndex+1:], node.entries[entryIndex:])
+
+	return &champNode[K, V]{
+		entryMap: newEntryMap,
+		childMap: node.childMap,
+		entries:  newEntries,
+		children: node.children,
+	}
 }
 
 func (node *champNode[K, V]) delete(key K, hash uint64, depth int) *champNode[K, V] {
 	if depth == champMaxDepth {
 		for i := range node.entries {
 			if node.entries[i].Key == key {
-				result := node.clone()
-				result.entries = slices.Delete(result.entries, i, i+1)
-				return result
+				// Exact size allocation for removing an element
+				if len(node.entries) == 1 {
+					return nil // Terminal node is now completely empty
+				}
+				newEntries := make([]champEntry[K, V], len(node.entries)-1)
+				copy(newEntries[:i], node.entries[:i])
+				copy(newEntries[i:], node.entries[i+1:])
+
+				return &champNode[K, V]{
+					entryMap: node.entryMap,
+					childMap: node.childMap,
+					entries:  newEntries,
+					children: node.children,
+				}
 			}
 		}
 
@@ -200,15 +234,22 @@ func (node *champNode[K, V]) delete(key K, hash uint64, depth int) *champNode[K,
 	bitmapPos := champBitmapPos(hash, depth)
 
 	if node.entryMap&bitmapPos != 0 {
-		result := node.clone()
+		entryIndex := champIndex(node.entryMap, bitmapPos)
+		if node.entries[entryIndex].Key != key {
+			return nil // Hash collision but different key: item doesn't exist
+		}
 
-		// Set entry bit to 0 to indicate not present.
-		result.entryMap &= ^bitmapPos
-		entryIndex := champIndex(result.entryMap, bitmapPos)
-		// Delete entry.
-		result.entries = slices.Delete(result.entries, entryIndex, entryIndex+1)
+		// Exact size allocation: remove 1 entry from this node
+		newEntries := make([]champEntry[K, V], len(node.entries)-1)
+		copy(newEntries[:entryIndex], node.entries[:entryIndex])
+		copy(newEntries[entryIndex:], node.entries[entryIndex+1:])
 
-		return result
+		return &champNode[K, V]{
+			entryMap: node.entryMap & ^bitmapPos,
+			childMap: node.childMap,
+			entries:  newEntries,
+			children: node.children,
+		}
 	}
 
 	if node.childMap&bitmapPos != 0 {
@@ -216,30 +257,49 @@ func (node *champNode[K, V]) delete(key K, hash uint64, depth int) *champNode[K,
 
 		child := node.children[childIndex].delete(key, hash, depth+1)
 		if child == nil {
-			// Nothing was deleted, return current node without cloning.
-			return node
+			return nil
 		}
 
-		result := node.clone()
 		if len(child.entries) == 1 && len(child.children) == 0 {
 			// Child only has one item remaining, can be collapsed.
 			// Child can never reach 0 entries, because it gets created at 2 and collapsed at 1.
 			// Check the entries length, not the entryMap 1 count, to covers full hash collisions.
 			entry := child.entries[0]
 
-			// Set child bit to 0 to indicate not present.
-			result.childMap &= ^bitmapPos
-			// Delete child.
-			result.children = slices.Delete(result.children, childIndex, childIndex+1)
+			// Remove the child pointer
+			newChildren := make([]*champNode[K, V], len(node.children)-1)
+			copy(newChildren[:childIndex], node.children[:childIndex])
+			copy(newChildren[childIndex:], node.children[childIndex+1:])
 
-			result.entryMap |= bitmapPos
-			entryIndex := champIndex(result.entryMap, bitmapPos)
-			result.entries = slices.Insert(result.entries, entryIndex, entry)
-		} else {
-			result.children[childIndex] = child
+			// Add the collapsed leaf entry
+			newEntryMap := node.entryMap | bitmapPos
+			entryIndex := champIndex(newEntryMap, bitmapPos)
+
+			newEntries := make([]champEntry[K, V], len(node.entries)+1)
+			copy(newEntries[:entryIndex], node.entries[:entryIndex])
+			newEntries[entryIndex] = entry
+			copy(newEntries[entryIndex+1:], node.entries[entryIndex:])
+
+			return &champNode[K, V]{
+				entryMap: newEntryMap,
+				childMap: node.childMap & ^bitmapPos,
+				entries:  newEntries,
+				children: newChildren,
+			}
 		}
 
-		return result
+		// Standard child update: Structural sharing for entries array,
+		// allocate an exact matching slice size only for the updated child pointer array.
+		newChildren := make([]*champNode[K, V], len(node.children))
+		copy(newChildren, node.children)
+		newChildren[childIndex] = child
+
+		return &champNode[K, V]{
+			entryMap: node.entryMap,
+			childMap: node.childMap,
+			entries:  node.entries, // Structurally shared!
+			children: newChildren,
+		}
 	}
 
 	// Nothing to delete

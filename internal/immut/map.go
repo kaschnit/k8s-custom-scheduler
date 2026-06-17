@@ -12,7 +12,7 @@ import (
 // at the cost of slightly more memory usage.
 // All operations are thread-safe.
 type Map[K cmp.Ordered, V any] struct {
-	root     *champNode[K, V] // TODO: skip the root to save one pointer jump per operation.
+	root     *champNode[K, V]
 	hashSeed maphash.Seed
 }
 
