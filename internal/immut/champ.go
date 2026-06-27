@@ -8,16 +8,17 @@ import (
 
 const (
 	// champBranchingFactorBits is the number of bits needed to represent a branching
-	// factor of 64. It is 6 because we need 6 bits to represent 64 items.
-	champBranchingFactorBits = 6
+	// factor of 32. It is 6 because we need 6 bits to represent 32 items.
+	champBranchingFactorBits = 5
 	// champBranchingFactorBitsMask is a mask to extract branch bits for CHAMP with branching
-	// factor of 64. This is 6 bits because [branchingFactor64Bits] is 6.
-	champBranchingFactorBitsMask uint64 = 0b111111
+	// factor of 32. This is 5 bits because [champBranchingFactorBits] is 5. It is a uint64
+	// because it's used as a mask against the uint64 hash.
+	champBranchingFactorBitsMask uint64 = 0b11111
 	// champMaxDepth is the max depth of the CHAMP.
-	// This is 11 because CHAMP uses 64 bit hash, and 6 bits are used per level.
-	// The 11th level uses only 4 bits since the previous 10 levels use a total of 60 bits,
-	// leaving only 4 for the 11th level.
-	champMaxDepth = 11
+	// This is 13 because CHAMP uses 64 bit hash, and 5 bits are used per level.
+	// The 13th level uses only 4 bits since the previous levels use a total of 60 bits,
+	// leaving only 4 for the 13th level.
+	champMaxDepth = 13
 )
 
 type champEntry[K comparable, V any] struct {
@@ -26,8 +27,8 @@ type champEntry[K comparable, V any] struct {
 }
 
 type champNode[K cmp.Ordered, V any] struct {
-	entryMap uint64
-	childMap uint64
+	entryMap uint32
+	childMap uint32
 	entries  []champEntry[K, V]
 	children []*champNode[K, V]
 }
@@ -320,7 +321,7 @@ func (node *champNode[K, V]) traverse(yield func(K, V) bool) bool {
 	var entryIdx, childIdx int
 
 	for i := range 64 {
-		bit := uint64(1) << i
+		bit := uint32(1) << i
 		if node.entryMap&bit != 0 {
 			if !yield(node.entries[entryIdx].Key, node.entries[entryIdx].Value) {
 				return false
@@ -353,7 +354,7 @@ func (node *champNode[K, V]) traverseKeys(yield func(K) bool) bool {
 	var entryIdx, childIdx int
 
 	for i := range 64 {
-		bit := uint64(1) << i
+		bit := uint32(1) << i
 		if node.entryMap&bit != 0 {
 			if !yield(node.entries[entryIdx].Key) {
 				return false
@@ -386,7 +387,7 @@ func (node *champNode[K, V]) traverseValues(yield func(V) bool) bool {
 	var entryIdx, childIdx int
 
 	for i := range 64 {
-		bit := uint64(1) << i
+		bit := uint32(1) << i
 		if node.entryMap&bit != 0 {
 			if !yield(node.entries[entryIdx].Value) {
 				return false
@@ -407,7 +408,7 @@ func (node *champNode[K, V]) traverseValues(yield func(V) bool) bool {
 
 // champBitmapPos gets the position of the hash's item within
 // a bitmap representing a node's items at the given depth.
-func champBitmapPos(hash uint64, depth int) uint64 {
+func champBitmapPos(hash uint64, depth int) uint32 {
 	// There are branchingFactor64Bits bits per level.
 	// At depth 1, we want the first branchingFactor64Bits.
 	// At depth 2, we want the next branchingFactor64Bits.
@@ -420,11 +421,11 @@ func champBitmapPos(hash uint64, depth int) uint64 {
 	bitsForDepth := (hash >> rShiftForDepth) & champBranchingFactorBitsMask
 
 	// Get the position within a 64-bit bitmap for the number that these bits represent.
-	return uint64(1) << bitsForDepth
+	return uint32(1) << bitsForDepth
 }
 
 // champIndex gets an index for the item in the bitmap at the given position.
-func champIndex(bitmap, bitmapPos uint64) int {
+func champIndex(bitmap, bitmapPos uint32) int {
 	// bitmapPos is a single set bit, so subtracting 1 yields a mask of all 1 bits.
 	// For example, if bitmapPos is 0b1000, bitmapPos-1 is 0b0111.
 	// This can be used to mask all bits before the given position.
@@ -433,5 +434,5 @@ func champIndex(bitmap, bitmapPos uint64) int {
 	bitsLowerThanPos := bitmap & mask
 	// Count the number of lower bits.
 	// This provides the index into the slice of items in the node.
-	return bits.OnesCount64(bitsLowerThanPos)
+	return bits.OnesCount32(bitsLowerThanPos)
 }
