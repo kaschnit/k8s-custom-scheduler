@@ -5,9 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/benbjohnson/immutable"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	"github.com/kaschnit/kaschnit-scheduler/internal/hashers"
+	"github.com/kaschnit/kaschnit-scheduler/internal/immut"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -19,8 +18,8 @@ type Quota struct {
 	// Used is the used resources.
 	used alloc.Resources
 	// podsByID are pods that currently contribute to quota.
-	// Immutable map is used to make clones cheap.
-	podsByID *immutable.Map[types.UID, *corev1.Pod]
+	// Immutable map is used to make clones cheap and lock-free.
+	podsByID immut.Map[types.UID, *corev1.Pod]
 
 	lock sync.RWMutex
 }
@@ -30,7 +29,7 @@ func NewQuota(max alloc.Resources) *Quota {
 	return &Quota{
 		max:      max,
 		used:     make(alloc.Resources),
-		podsByID: immutable.NewMap[types.UID, *corev1.Pod](hashers.StrLike[types.UID]{}),
+		podsByID: immut.MakeMap[types.UID, *corev1.Pod](),
 	}
 }
 
@@ -89,8 +88,7 @@ func (q *Quota) DeletePodsFunc(predicate func(*corev1.Pod) bool) {
 	podsByID := q.podsByID
 	q.lock.RUnlock()
 
-	for itr := podsByID.Iterator(); !itr.Done(); {
-		_, otherPod, _ := itr.Next()
+	for otherPod := range podsByID.Values() {
 		if predicate(otherPod) {
 			victims = append(victims, otherPod)
 		}
@@ -190,9 +188,7 @@ func (q *Quota) stringNoLock() string {
 
 	const maxPodSamples = 3
 	podSamples := make([]string, 0, maxPodSamples)
-	for itr := q.podsByID.Iterator(); !itr.Done(); {
-		_, pod, _ := itr.Next()
-
+	for pod := range q.podsByID.Values() {
 		if len(podSamples) >= maxPodSamples {
 			break
 		}
