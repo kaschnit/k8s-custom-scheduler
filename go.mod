@@ -15,7 +15,7 @@ tool (
 )
 
 require (
-	github.com/kaschnit/immut v0.0.0-20260628193147-e5d2662bcba1
+	github.com/kaschnit/immut v0.0.0-20260628195142-985faf1d2e94
 	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
