@@ -26,7 +26,7 @@ func collectSeq2[K comparable, V any](seq iter.Seq2[K, V]) []pair[K, V] {
 }
 
 func TestMap_BasicCRUDAndImmutability(t *testing.T) {
-	m1 := immut.NewMap[string, int]()
+	m1 := immut.MakeMap[string, int]()
 
 	// 1. Get on empty map
 	_, found := m1.Get("foo")
@@ -58,14 +58,14 @@ func TestMap_BasicCRUDAndImmutability(t *testing.T) {
 
 	// 5. Deleting non-existent key returns identical map pointer
 	m5 := m4.Delete("non-existent")
-	assert.Same(t, m4, m5, "Expected Delete of missing key to return the exact same map reference")
+	assert.Equal(t, m4, m5, "Expected Delete of missing key to return the exact same map reference")
 }
 
 func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
-	m := immut.NewMap[int, int]()
+	m := immut.MakeMap[int, int]()
 	count := 5000
 
-	snapshots := make([]*immut.Map[int, int], count)
+	snapshots := make([]immut.Map[int, int], count)
 
 	for i := range count {
 		m = m.Put(i, i*10)
@@ -92,7 +92,7 @@ func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
 }
 
 func TestMap_Iterators(t *testing.T) {
-	m := immut.NewMap[string, string]().
+	m := immut.MakeMap[string, string]().
 		Put("A", "Apple").
 		Put("B", "Banana").
 		Put("C", "Cherry")
@@ -134,7 +134,7 @@ func TestMap_Iterators(t *testing.T) {
 }
 
 func TestMap_NodeCollapsingCanonicalInvariants(t *testing.T) {
-	mEmpty := immut.NewMap[string, int]()
+	mEmpty := immut.MakeMap[string, int]()
 	mWithBase := mEmpty.Put("BaseKey", 1)
 	mPushed := mWithBase.Put("CollidingSibling", 2)
 	mCollapsed := mPushed.Delete("CollidingSibling")
@@ -149,7 +149,7 @@ func TestMap_NodeCollapsingCanonicalInvariants(t *testing.T) {
 }
 
 func TestMap_MaxDepthFullHashCollisionRouting(t *testing.T) {
-	m := immut.NewMap[string, int]()
+	m := immut.MakeMap[string, int]()
 
 	for i := range 50 {
 		key := fmt.Sprintf("CollisionKeyPrefix-%d", i)
@@ -165,7 +165,7 @@ func TestMap_MaxDepthFullHashCollisionRouting(t *testing.T) {
 }
 
 func TestMap_TotalBranchDrainToEmptyLeakPrevention(t *testing.T) {
-	m := immut.NewMap[string, int]()
+	m := immut.MakeMap[string, int]()
 
 	// Build up a nested branch depth
 	m = m.Put("Alpha", 100)
@@ -187,7 +187,7 @@ func TestMap_TotalBranchDrainToEmptyLeakPrevention(t *testing.T) {
 }
 
 func TestMap_ZeroValueStorageIntegrity(t *testing.T) {
-	m := immut.NewMap[string, int]()
+	m := immut.MakeMap[string, int]()
 
 	// Put explicit integer zero values
 	m = m.Put("ZeroKey", 0)
@@ -197,7 +197,7 @@ func TestMap_ZeroValueStorageIntegrity(t *testing.T) {
 	assert.Equal(t, 0, val, "Stored zero value was altered or corrupted")
 
 	// Validate with a map containing pointer/interface types or empty strings
-	mStr := immut.NewMap[string, string]().Put("EmptyStrKey", "")
+	mStr := immut.MakeMap[string, string]().Put("EmptyStrKey", "")
 	strVal, strFound := mStr.Get("EmptyStrKey")
 	assert.True(t, strFound)
 	assert.Equal(t, "", strVal)
@@ -206,7 +206,7 @@ func TestMap_ZeroValueStorageIntegrity(t *testing.T) {
 func TestMap_ConcurrentReadsAndIsolatedWrites(t *testing.T) {
 	// 1. Build a pristine baseline map.
 	// Once initialized, this specific instance is NEVER updated globally.
-	baselineMap := immut.NewMap[string, int]()
+	baselineMap := immut.MakeMap[string, int]()
 	itemCount := 500
 
 	for i := range itemCount {
