@@ -47,14 +47,13 @@ func (m *Map[K, V]) Put(key K, value V) *Map[K, V] {
 // If the key exists, returns a copy of the map without mutating the original.
 // If the key doesn't exist, returns this map without mutating.
 func (m *Map[K, V]) Delete(key K) *Map[K, V] {
-	newRoot := m.root.delete(key, maphash.Comparable(m.hashSeed, key), 1)
-	if newRoot == nil {
-		// No deletion happened, return the same map.
+	newRoot, deleted := m.root.delete(key, maphash.Comparable(m.hashSeed, key), 1)
+	if !deleted {
 		return m
 	}
 
 	return &Map[K, V]{
-		root:     *newRoot,
+		root:     newRoot,
 		hashSeed: m.hashSeed,
 	}
 }

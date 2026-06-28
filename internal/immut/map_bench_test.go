@@ -12,19 +12,19 @@ import (
 // Helper to generate a predictable permutation of unique string keys
 func generateKeys(count int) []string {
 	keys := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		keys[i] = fmt.Sprintf("key-structured-prefix-vector-%06d", i)
 	}
 	return keys
 }
 
 func BenchmarkMap_Put(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
+	sizes := []int{10, 100, 1_000, 10_000, 100_000}
 
 	for _, size := range sizes {
 		keys := generateKeys(size)
 
-		// 1. Benchmark your implementation (CHAMP)
+		// 1. Benchmark immut.Map (CHAMP) write
 		b.Run(fmt.Sprintf("immut.Map/Size-%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -36,7 +36,7 @@ func BenchmarkMap_Put(b *testing.B) {
 			}
 		})
 
-		// 2. Benchmark benbjohnson/immutable (HAMT)
+		// 2. Benchmark benbjohnson/immutable (HAMT) write
 		b.Run(fmt.Sprintf("benbjohnson.Map/Size-%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -52,35 +52,34 @@ func BenchmarkMap_Put(b *testing.B) {
 }
 
 func BenchmarkMap_Get(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
+	sizes := []int{10, 100, 1_000, 10_000, 100_000}
 
 	for _, size := range sizes {
 		keys := generateKeys(size)
 
-		// Pre-populate your map
+		// Pre-populate immut.Map map
 		myMap := immut.NewMap[string, int]()
 		for j, key := range keys {
 			myMap = myMap.Put(key, j)
 		}
 
-		// Pre-populate benbjohnson's map
+		// Pre-populate benbjohnson/immutable Map
 		benMap := immutable.NewMap[string, int](nil)
 		for j, key := range keys {
 			benMap = benMap.Set(key, j)
 		}
 
-		// 1. Benchmark your implementation's read path
+		// 1. Benchmark immut.Map (CHAMP) read
 		b.Run(fmt.Sprintf("immut.Map/Size-%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				// Safe, dynamic index generation per iteration step
 				key := keys[rand.IntN(size)]
 				_, _ = myMap.Get(key)
 			}
 		})
 
-		// 2. Benchmark benbjohnson's read path
+		// 2. Benchmark benbjohnson/immutable (HAMT) read
 		b.Run(fmt.Sprintf("benbjohnson.Map/Size-%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
