@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kaschnit/immut"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	"github.com/kaschnit/kaschnit-scheduler/internal/immut"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
