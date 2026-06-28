@@ -7,10 +7,10 @@ import (
 
 	configv1 "github.com/kaschnit/kaschnit-scheduler/apis/config/v1"
 	schedv1 "github.com/kaschnit/kaschnit-scheduler/apis/scheduling/v1"
+	schedclients "github.com/kaschnit/kaschnit-scheduler/client/clientset/scheduling"
+	schedinformers "github.com/kaschnit/kaschnit-scheduler/client/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
 	"github.com/kaschnit/kaschnit-scheduler/internal/fwkutil"
-	schedclients "github.com/kaschnit/kaschnit-scheduler/internal/generated/clients/scheduling"
-	schedinformers "github.com/kaschnit/kaschnit-scheduler/internal/generated/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"

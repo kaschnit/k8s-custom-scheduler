@@ -6,8 +6,8 @@ import (
 	"time"
 
 	schedv1 "github.com/kaschnit/kaschnit-scheduler/apis/scheduling/v1"
+	schedinformers "github.com/kaschnit/kaschnit-scheduler/client/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	schedinformers "github.com/kaschnit/kaschnit-scheduler/internal/generated/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/podstates"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -4,8 +4,8 @@ kind: Pod
 metadata:
   name: nginx-preemptor
   labels:
-    quota.scheduling.kaschnit.github.io/queue: "tenant-a"
-    quota.scheduling.kaschnit.github.io/preemptor: "true"
+    scheduling.kaschnit.github.io/queue: "tenant-a"
+    scheduling.kaschnit.github.io/preemptor: "true"
 spec:
   schedulerName: kaschnit-scheduler
   priorityClassName: "high"

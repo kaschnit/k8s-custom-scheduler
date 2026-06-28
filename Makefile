@@ -35,11 +35,7 @@ IMG_DIR := $(BUILD_DIR)/image
 IMG_TAR_FILE := $(IMG_DIR)/scheduler.tar
 
 # Helm
-CHART_SRC_DIR := $(CURDIR)/charts/kaschnit-scheduler
-CHART_BUILD_DIR := $(BUILD_DIR)/charts/kaschnit-scheduler
-
-# Generated manifests
-BUILD_MANIFEST_DIR := $(BUILD_DIR)/manifests
+CHART_DIR := $(CURDIR)/charts/kaschnit-scheduler
 
 $(BUILD_DIR):
 	mkdir -p "$(BUILD_DIR)"
@@ -50,12 +46,6 @@ $(LOCALBIN_DIR):
 $(IMG_DIR):
 	mkdir -p "$(IMG_DIR)"
 
-$(BUILD_MANIFEST_DIR):
-	mkdir -p "$(BUILD_MANIFEST_DIR)"
-
-$(CHART_BUILD_DIR):
-	mkdir -p "$(CHART_BUILD_DIR)"
-
 ##@ General
 
 .PHONY: help
@@ -65,14 +55,19 @@ help: ## Display this help.
 .PHONY: clean
 clean: ## Clean up files.
 	find . -name .DS_Store -type f -delete
-	find . -name zz_generated.*.go -type f -delete
-	rm -rf $(CURDIR)/internal/generated
 	rm -rf $(BUILD_DIR)
 
 ##@ Development
 
 .PHONY: generate
-generate: controller-gen-objects generate-k8s-clients ## Generate code.
+generate: generate-code generate-manifests ## Generate files.
+
+.PHONY: generate-manifests
+generate-manifests: ## Generate Kubernetes manifests.
+	$(CONTROLLER_GEN) paths=./apis/... crd:crdVersions=v1 output:crd:artifacts:config=$(CHART_DIR)/templates
+
+.PHONY: generate-code
+generate-code: controller-gen-objects generate-k8s-clients ## Generate code.
 
 .PHONY: controller-gen-objects
 controller-gen-objects:
@@ -87,23 +82,23 @@ k8s-client-gen: controller-gen-objects
 		--clientset-name "scheduling" \
 		--input-base $(MODULE)/apis \
 		--input scheduling/v1 \
-		--output-dir ./internal/generated/clients \
-		--output-pkg $(MODULE)/internal/generated/clients
+		--output-dir ./client/clientset \
+		--output-pkg $(MODULE)/client/clientset
 
 .PHONY: k8s-lister-gen
 k8s-lister-gen: controller-gen-objects
 	$(LISTER_GEN) \
-		--output-dir ./internal/generated/listers \
-		--output-pkg $(MODULE)/internal/generated/listers \
+		--output-dir ./client/listers \
+		--output-pkg $(MODULE)/client/listers \
 		./apis/scheduling/v1
 
 .PHONY: k8s-informer-gen
 k8s-informer-gen: controller-gen-objects k8s-client-gen k8s-lister-gen
 	$(INFORMER_GEN) \
-        --versioned-clientset-package $(MODULE)/internal/generated/clients/scheduling \
-        --listers-package $(MODULE)/internal/generated/listers \
-        --output-dir ./internal/generated/informers \
-        --output-pkg $(MODULE)/internal/generated/informers \
+        --versioned-clientset-package $(MODULE)/client/clientset/scheduling \
+        --listers-package $(MODULE)/client/listers \
+        --output-dir ./client/informers \
+        --output-pkg $(MODULE)/client/informers \
         ./apis/scheduling/v1
 
 .PHONY: go-tidy
@@ -157,11 +152,6 @@ image: generate $(IMG_DIR) ## Build an image and optionally push it.
 			--tags=development \
 			$(CMD)
 
-.PHONY: chart
-chart: generate image $(CHART_BUILD_DIR) ## Build a Helm chart.
-	cp -r $(CHART_SRC_DIR)/* $(CHART_BUILD_DIR)
-	$(CONTROLLER_GEN) paths=./apis/... crd:crdVersions=v1 output:crd:artifacts:config=$(CHART_BUILD_DIR)/templates
-
 .PHONY: kind-delete
 kind-delete: ## Delete the KIND testing cluster.
 	$(KIND) delete cluster --name "$(KIND_CLUSTER_NAME)"
@@ -171,9 +161,9 @@ kind-create: kind-delete ## Create a KIND cluster for testing.
 	$(KIND) create cluster --name "$(KIND_CLUSTER_NAME)"
 
 .PHONY: kind-deploy
-kind-deploy: image chart kind-create ## Deploy the scheduler to a KIND cluster for testing.
+kind-deploy: generate image kind-create ## Deploy the scheduler to a KIND cluster for testing.
 	$(KIND) load image-archive $(IMG_TAR_FILE) --name "$(KIND_CLUSTER_NAME)"
-	$(HELM) install kaschnit-scheduler $(CHART_BUILD_DIR) \
+	$(HELM) install kaschnit-scheduler $(CHART_DIR) \
 		--values test/kind/values.yaml \
 		--namespace kaschnit-scheduler \
 		--create-namespace
