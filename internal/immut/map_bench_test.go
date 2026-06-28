@@ -18,7 +18,7 @@ func generateKeys(count int) []string {
 	return keys
 }
 
-func BenchmarkMap_Put(b *testing.B) {
+func BenchmarkMap_Set(b *testing.B) {
 	sizes := []int{10, 100, 1_000, 10_000, 100_000, 500_000}
 
 	for _, size := range sizes {
@@ -31,7 +31,7 @@ func BenchmarkMap_Put(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				m := immut.MakeMap[string, int]()
 				for j, key := range keys {
-					m = m.Put(key, j)
+					m = m.Set(key, j)
 				}
 			}
 		})
@@ -60,7 +60,7 @@ func BenchmarkMap_Get(b *testing.B) {
 		// Pre-populate immut.Map map
 		myMap := immut.MakeMap[string, int]()
 		for j, key := range keys {
-			myMap = myMap.Put(key, j)
+			myMap = myMap.Set(key, j)
 		}
 
 		// Pre-populate benbjohnson/immutable Map

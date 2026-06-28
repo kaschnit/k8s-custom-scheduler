@@ -13,6 +13,7 @@ import (
 // All operations are thread-safe.
 type Map[K cmp.Ordered, V any] struct {
 	hashSeed maphash.Seed
+	size     int
 	root     champNode[K, V]
 }
 
@@ -20,7 +21,6 @@ type Map[K cmp.Ordered, V any] struct {
 func MakeMap[K cmp.Ordered, V any]() Map[K, V] {
 	return Map[K, V]{
 		hashSeed: maphash.MakeSeed(),
-		root:     champNode[K, V]{},
 	}
 }
 
@@ -31,16 +31,23 @@ func (m Map[K, V]) Get(key K) (V, bool) {
 	return m.root.get(key, maphash.Comparable(m.hashSeed, key), 1)
 }
 
-// Put associates the value with the key.
+// Set associates the value with the key.
 // Returns a copy of the map without mutating the original even if an identical
 // key/value pair already existed in the map.
-func (m Map[K, V]) Put(key K, value V) Map[K, V] {
-	newRoot := m.root.insert(key, maphash.Comparable(m.hashSeed, key), value, 1, m.hashSeed)
+func (m Map[K, V]) Set(key K, value V) Map[K, V] {
+	newRoot, isNewKey := m.root.insert(key, maphash.Comparable(m.hashSeed, key), value, 1, m.hashSeed)
 
-	return Map[K, V]{
+	result := Map[K, V]{
 		hashSeed: m.hashSeed,
+		size:     m.size,
 		root:     newRoot,
 	}
+
+	if isNewKey {
+		result.size++
+	}
+
+	return result
 }
 
 // Delete removes the key and its associated value.
@@ -54,8 +61,14 @@ func (m Map[K, V]) Delete(key K) Map[K, V] {
 
 	return Map[K, V]{
 		hashSeed: m.hashSeed,
+		size:     m.size - 1,
 		root:     newRoot,
 	}
+}
+
+// Len returns the number of items in this map.
+func (m Map[K, V]) Len() int {
+	return m.size
 }
 
 // All iterates the key/value pairs.

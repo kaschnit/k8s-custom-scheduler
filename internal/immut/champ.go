@@ -77,7 +77,7 @@ func (node *champNode[K, V]) get(key K, hash uint64, depth int) (V, bool) {
 	return zero, false
 }
 
-func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hashSeed maphash.Seed) champNode[K, V] {
+func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hashSeed maphash.Seed) (champNode[K, V], bool) {
 	if depth == champMaxDepth {
 		// Max depth, do not use hashing here to avoid hash collision.
 		// Check for existing entry to overwrite.
@@ -91,7 +91,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 				}
 				copy(result.entries, node.entries)
 				result.entries[i].Value = value
-				return result
+				return result, false
 			}
 		}
 
@@ -114,7 +114,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		result.entries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
 		copy(result.entries[entryIndex+1:], node.entries[entryIndex:])
 
-		return result
+		return result, true
 	}
 
 	bitmapPos := champBitmapPos(hash, depth)
@@ -138,13 +138,13 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 			}
 			copy(result.entries, node.entries)
 			result.entries[entryIndex].Value = value
-			return result
+			return result, false
 		}
 
 		// Split existing entry into a child branch
 		child := champNode[K, V]{}
-		child = child.insert(existingEntry.Key, maphash.Comparable(hashSeed, existingEntry.Key), existingEntry.Value, depth+1, hashSeed)
-		child = child.insert(key, hash, value, depth+1, hashSeed)
+		child, _ = child.insert(existingEntry.Key, maphash.Comparable(hashSeed, existingEntry.Key), existingEntry.Value, depth+1, hashSeed)
+		child, _ = child.insert(key, hash, value, depth+1, hashSeed)
 
 		newChildMap := node.childMap | bitmapPos
 		childIndex := champIndex(newChildMap, bitmapPos)
@@ -162,7 +162,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		copy(result.children[childIndex+1:], node.children[childIndex:])
 		result.children[childIndex] = &child
 
-		return result
+		return result, true
 	}
 
 	// Check for child.
@@ -170,7 +170,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 	if node.childMap&bitmapPos != 0 {
 		// Child exists.
 		childIndex := champIndex(node.childMap, bitmapPos)
-		child := node.children[childIndex].insert(key, hash, value, depth+1, hashSeed)
+		child, isNewKey := node.children[childIndex].insert(key, hash, value, depth+1, hashSeed)
 
 		// Mutating an existing child path: structural sharing for entries,
 		// and we only allocate a new children slice of the exact same size to update the pointer.
@@ -183,7 +183,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		copy(result.children, node.children)
 		result.children[childIndex] = &child
 
-		return result
+		return result, isNewKey
 	}
 
 	// Child does not exist.
@@ -202,7 +202,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 	result.entries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
 	copy(result.entries[entryIndex+1:], node.entries[entryIndex:])
 
-	return result
+	return result, true
 }
 
 func (node *champNode[K, V]) delete(key K, hash uint64, depth int) (champNode[K, V], bool) {

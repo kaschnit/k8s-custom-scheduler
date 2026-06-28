@@ -27,31 +27,40 @@ func collectSeq2[K comparable, V any](seq iter.Seq2[K, V]) []pair[K, V] {
 
 func TestMap_BasicCRUDAndImmutability(t *testing.T) {
 	m1 := immut.MakeMap[string, int]()
+	assert.Equal(t, 0, m1.Len())
 
 	// 1. Get on empty map
 	_, found := m1.Get("foo")
 	assert.False(t, found, "Expected key 'foo' to not be found in empty map")
+	assert.Equal(t, 0, m1.Len())
 
-	// 2. Put returns a new map, leaves old map unchanged
-	m2 := m1.Put("foo", 42)
+	// 2. Set returns a new map, leaves old map unchanged
+	m2 := m1.Set("foo", 42)
 	_, found = m1.Get("foo")
-	assert.False(t, found, "Mutation leak: original map m1 was altered after Put")
+	assert.False(t, found, "Mutation leak: original map m1 was altered after Set")
+	assert.Equal(t, 0, m1.Len())
+	assert.Equal(t, 1, m2.Len())
 
 	val, found := m2.Get("foo")
 	assert.True(t, found)
 	assert.Equal(t, 42, val)
+	assert.Equal(t, 1, m2.Len())
 
 	// 3. Overwrite returns a new map, retains historical snapshots
-	m3 := m2.Put("foo", 100)
+	m3 := m2.Set("foo", 100)
 	valM2, _ := m2.Get("foo")
 	valM3, _ := m3.Get("foo")
 	assert.Equal(t, 42, valM2)
 	assert.Equal(t, 100, valM3)
+	assert.Equal(t, 1, m2.Len())
+	assert.Equal(t, 1, m3.Len())
 
 	// 4. Delete leaves subsequent snapshots isolated
 	m4 := m3.Delete("foo")
 	_, found = m4.Get("foo")
 	assert.False(t, found, "Expected 'foo' to be deleted from m4")
+	assert.Equal(t, 1, m3.Len())
+	assert.Equal(t, 0, m4.Len())
 
 	_, found = m3.Get("foo")
 	assert.True(t, found, "Mutation leak: 'foo' was deleted from historical snapshot m3")
@@ -59,6 +68,7 @@ func TestMap_BasicCRUDAndImmutability(t *testing.T) {
 	// 5. Deleting non-existent key returns identical map pointer
 	m5 := m4.Delete("non-existent")
 	assert.Equal(t, m4, m5, "Expected Delete of missing key to return the exact same map reference")
+	assert.Equal(t, 0, m5.Len())
 }
 
 func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
@@ -68,8 +78,13 @@ func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
 	snapshots := make([]immut.Map[int, int], count)
 
 	for i := range count {
-		m = m.Put(i, i*10)
+		m = m.Set(i, i*10)
 		snapshots[i] = m
+	}
+
+	// Asssert sizes
+	for i := range count {
+		assert.Equal(t, i+1, snapshots[i].Len())
 	}
 
 	// Assert everything can be fetched perfectly from final state
@@ -93,9 +108,10 @@ func TestMap_MassiveInsertionAndStructuralStability(t *testing.T) {
 
 func TestMap_Iterators(t *testing.T) {
 	m := immut.MakeMap[string, string]().
-		Put("A", "Apple").
-		Put("B", "Banana").
-		Put("C", "Cherry")
+		Set("A", "Apple").
+		Set("B", "Banana").
+		Set("C", "Cherry")
+	assert.Equal(t, 3, m.Len())
 
 	// 1. Test All()
 	pairs := collectSeq2(m.All())
@@ -135,8 +151,8 @@ func TestMap_Iterators(t *testing.T) {
 
 func TestMap_NodeCollapsingCanonicalInvariants(t *testing.T) {
 	mEmpty := immut.MakeMap[string, int]()
-	mWithBase := mEmpty.Put("BaseKey", 1)
-	mPushed := mWithBase.Put("CollidingSibling", 2)
+	mWithBase := mEmpty.Set("BaseKey", 1)
+	mPushed := mWithBase.Set("CollidingSibling", 2)
 	mCollapsed := mPushed.Delete("CollidingSibling")
 
 	val, found := mCollapsed.Get("BaseKey")
@@ -153,7 +169,7 @@ func TestMap_MaxDepthFullHashCollisionRouting(t *testing.T) {
 
 	for i := range 50 {
 		key := fmt.Sprintf("CollisionKeyPrefix-%d", i)
-		m = m.Put(key, i)
+		m = m.Set(key, i)
 	}
 
 	for i := range 50 {
@@ -168,8 +184,8 @@ func TestMap_TotalBranchDrainToEmptyLeakPrevention(t *testing.T) {
 	m := immut.MakeMap[string, int]()
 
 	// Build up a nested branch depth
-	m = m.Put("Alpha", 100)
-	m = m.Put("Beta", 200)
+	m = m.Set("Alpha", 100)
+	m = m.Set("Beta", 200)
 
 	// Verify existence
 	_, fA := m.Get("Alpha")
@@ -189,15 +205,15 @@ func TestMap_TotalBranchDrainToEmptyLeakPrevention(t *testing.T) {
 func TestMap_ZeroValueStorageIntegrity(t *testing.T) {
 	m := immut.MakeMap[string, int]()
 
-	// Put explicit integer zero values
-	m = m.Put("ZeroKey", 0)
+	// Set explicit integer zero values
+	m = m.Set("ZeroKey", 0)
 
 	val, found := m.Get("ZeroKey")
 	assert.True(t, found, "Expected explicitly added zero value key to be found")
 	assert.Equal(t, 0, val, "Stored zero value was altered or corrupted")
 
 	// Validate with a map containing pointer/interface types or empty strings
-	mStr := immut.MakeMap[string, string]().Put("EmptyStrKey", "")
+	mStr := immut.MakeMap[string, string]().Set("EmptyStrKey", "")
 	strVal, strFound := mStr.Get("EmptyStrKey")
 	assert.True(t, strFound)
 	assert.Equal(t, "", strVal)
@@ -210,7 +226,7 @@ func TestMap_ConcurrentReadsAndIsolatedWrites(t *testing.T) {
 	itemCount := 500
 
 	for i := range itemCount {
-		baselineMap = baselineMap.Put(fmt.Sprintf("key-%d", i), i*10)
+		baselineMap = baselineMap.Set(fmt.Sprintf("key-%d", i), i*10)
 	}
 
 	var wg sync.WaitGroup
@@ -267,7 +283,7 @@ func TestMap_ConcurrentReadsAndIsolatedWrites(t *testing.T) {
 			// Append worker-specific keys unique to this thread
 			for i := range 50 {
 				uniqueKey := fmt.Sprintf("worker-%d-private-%d", workerID, i)
-				localMap = localMap.Put(uniqueKey, workerID)
+				localMap = localMap.Set(uniqueKey, workerID)
 			}
 
 			// Verify the worker's private keys exist in its isolated universe
