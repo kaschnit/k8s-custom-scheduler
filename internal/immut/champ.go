@@ -77,13 +77,13 @@ func (node *champNode[K, V]) get(key K, hash uint64, depth int) (V, bool) {
 	return zero, false
 }
 
-func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hashSeed maphash.Seed) *champNode[K, V] {
+func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hashSeed maphash.Seed) champNode[K, V] {
 	if depth == champMaxDepth {
 		// Max depth, do not use hashing here to avoid hash collision.
 		// Check for existing entry to overwrite.
 		for i := range node.entries {
 			if node.entries[i].Key == key {
-				result := &champNode[K, V]{
+				result := champNode[K, V]{
 					entryMap: node.entryMap,
 					childMap: node.childMap,
 					children: node.children,
@@ -104,17 +104,17 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 			}
 		}
 
-		newEntries := make([]champEntry[K, V], len(node.entries)+1)
-		copy(newEntries[:entryIndex], node.entries[:entryIndex])
-		newEntries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
-		copy(newEntries[entryIndex+1:], node.entries[entryIndex:])
-
-		return &champNode[K, V]{
+		result := champNode[K, V]{
 			entryMap: node.entryMap,
 			childMap: node.childMap,
 			children: node.children,
-			entries:  newEntries,
+			entries:  make([]champEntry[K, V], len(node.entries)+1),
 		}
+		copy(result.entries[:entryIndex], node.entries[:entryIndex])
+		result.entries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
+		copy(result.entries[entryIndex+1:], node.entries[entryIndex:])
+
+		return result
 	}
 
 	bitmapPos := champBitmapPos(hash, depth)
@@ -130,7 +130,7 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		existingEntry := node.entries[entryIndex]
 		if existingEntry.Key == key {
 			// Overwrite entry (not a collision).
-			result := &champNode[K, V]{
+			result := champNode[K, V]{
 				entryMap: node.entryMap,
 				childMap: node.childMap,
 				children: node.children,
@@ -148,24 +148,24 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 		copy(newEntries[entryIndex:], node.entries[entryIndex+1:])
 
 		// 2. A new child node is added, so new children length is len + 1
-		child := &champNode[K, V]{}
+		child := champNode[K, V]{}
 		child = child.insert(existingEntry.Key, maphash.Comparable(hashSeed, existingEntry.Key), existingEntry.Value, depth+1, hashSeed)
 		child = child.insert(key, hash, value, depth+1, hashSeed)
 
 		newChildMap := node.childMap | bitmapPos
 		childIndex := champIndex(newChildMap, bitmapPos)
 
-		newChildren := make([]*champNode[K, V], len(node.children)+1)
-		copy(newChildren[:childIndex], node.children[:childIndex])
-		newChildren[childIndex] = child
-		copy(newChildren[childIndex+1:], node.children[childIndex:])
-
-		return &champNode[K, V]{
+		result := champNode[K, V]{
 			entryMap: node.entryMap & ^bitmapPos,
 			childMap: newChildMap,
 			entries:  newEntries,
-			children: newChildren,
+			children: make([]*champNode[K, V], len(node.children)+1),
 		}
+		copy(result.children[:childIndex], node.children[:childIndex])
+		result.children[childIndex] = &child
+		copy(result.children[childIndex+1:], node.children[childIndex:])
+
+		return result
 	}
 
 	// Check for child.
@@ -177,16 +177,16 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 
 		// Mutating an existing child path: structural sharing for entries,
 		// and we only allocate a new children slice of the exact same size to update the pointer.
-		newChildren := make([]*champNode[K, V], len(node.children))
-		copy(newChildren, node.children)
-		newChildren[childIndex] = child
-
-		return &champNode[K, V]{
+		result := champNode[K, V]{
 			entryMap: node.entryMap,
 			childMap: node.childMap,
 			entries:  node.entries,
-			children: newChildren,
+			children: make([]*champNode[K, V], len(node.children)),
 		}
+		copy(result.children, node.children)
+		result.children[childIndex] = &child
+
+		return result
 	}
 
 	// Child does not exist.
@@ -195,17 +195,17 @@ func (node *champNode[K, V]) insert(key K, hash uint64, value V, depth int, hash
 	entryIndex := champIndex(node.entryMap, bitmapPos)
 	newEntryMap := node.entryMap | bitmapPos
 
-	newEntries := make([]champEntry[K, V], len(node.entries)+1)
-	copy(newEntries[:entryIndex], node.entries[:entryIndex])
-	newEntries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
-	copy(newEntries[entryIndex+1:], node.entries[entryIndex:])
-
-	return &champNode[K, V]{
+	result := champNode[K, V]{
 		entryMap: newEntryMap,
 		childMap: node.childMap,
-		entries:  newEntries,
+		entries:  make([]champEntry[K, V], len(node.entries)+1),
 		children: node.children,
 	}
+	copy(result.entries[:entryIndex], node.entries[:entryIndex])
+	result.entries[entryIndex] = champEntry[K, V]{Key: key, Value: value}
+	copy(result.entries[entryIndex+1:], node.entries[entryIndex:])
+
+	return result
 }
 
 func (node *champNode[K, V]) delete(key K, hash uint64, depth int) *champNode[K, V] {
@@ -298,7 +298,7 @@ func (node *champNode[K, V]) delete(key K, hash uint64, depth int) *champNode[K,
 		return &champNode[K, V]{
 			entryMap: node.entryMap,
 			childMap: node.childMap,
-			entries:  node.entries, // Structurally shared!
+			entries:  node.entries,
 			children: newChildren,
 		}
 	}

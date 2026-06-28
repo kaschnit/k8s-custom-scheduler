@@ -12,14 +12,14 @@ import (
 // at the cost of slightly more memory usage.
 // All operations are thread-safe.
 type Map[K cmp.Ordered, V any] struct {
-	root     *champNode[K, V]
+	root     champNode[K, V]
 	hashSeed maphash.Seed
 }
 
 // NewMap creates a new [Map].
 func NewMap[K cmp.Ordered, V any]() *Map[K, V] {
 	return &Map[K, V]{
-		root:     &champNode[K, V]{},
+		root:     champNode[K, V]{},
 		hashSeed: maphash.MakeSeed(),
 	}
 }
@@ -36,10 +36,6 @@ func (m *Map[K, V]) Get(key K) (V, bool) {
 // key/value pair already existed in the map.
 func (m *Map[K, V]) Put(key K, value V) *Map[K, V] {
 	newRoot := m.root.insert(key, maphash.Comparable(m.hashSeed, key), value, 1, m.hashSeed)
-	if newRoot == nil {
-		// No insertion happened, return the same map.
-		return m
-	}
 
 	return &Map[K, V]{
 		root:     newRoot,
@@ -58,7 +54,7 @@ func (m *Map[K, V]) Delete(key K) *Map[K, V] {
 	}
 
 	return &Map[K, V]{
-		root:     newRoot,
+		root:     *newRoot,
 		hashSeed: m.hashSeed,
 	}
 }
