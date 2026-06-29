@@ -104,7 +104,7 @@ func (syn *Synchronizer) statusUpdateLoop(ctx context.Context) {
 			for q := range syn.queueMgr.QueueIter() {
 				statusPatch := schedv1.Queue{
 					Status: schedv1.QueueStatus{
-						Quota: schedv1.QueueQuotaStatus{
+						Quota: schedv1.QuotaStatus{
 							EffectiveMax: clusterTotalRes.TakeMinExisting(q.Quota().Max()).ToResourceList(),
 							Used:         q.Quota().Used().ToResourceList(),
 						},
@@ -148,18 +148,16 @@ func (syn *Synchronizer) addQueue(obj any) {
 	logger.Info("handling queue added",
 		"queue", klog.KObj(queueObj))
 
-	victimQSelector, err := metav1.LabelSelectorAsSelector(queueObj.Spec.Preemption.VictimQueues)
+	preemptionCfg, err := NewPreemptionConfigFromSpec(queueObj.Spec.Preemption)
 	if err != nil {
-		logger.Error(err, "invalid spec.preemption.victimQueues selector; default to select nothing",
-			"selector", queueObj.Spec.Preemption.VictimQueues)
-
-		victimQSelector = labels.Nothing()
+		logger.Error(err, "invalid spec.preemption",
+			"preemptionSpec", queueObj.Spec.Preemption)
 	}
 
 	syn.queueMgr.Put(queueObj.Name,
 		WithQuotaMax(alloc.FromResourceList(queueObj.Spec.Quota.Max)),
 		WithLabels(labels.Set(queueObj.Labels)),
-		WithVictimSelector(victimQSelector))
+		WithPreemptionConfig(preemptionCfg))
 }
 
 func (syn *Synchronizer) updateQueue(oldObj, newObj any) {
@@ -182,18 +180,16 @@ func (syn *Synchronizer) updateQueue(oldObj, newObj any) {
 		"oldQueue", klog.KObj(oldQueue),
 		"newQueue", klog.KObj(newQueue))
 
-	victimQSelector, err := metav1.LabelSelectorAsSelector(newQueue.Spec.Preemption.VictimQueues)
+	preemptionCfg, err := NewPreemptionConfigFromSpec(newQueue.Spec.Preemption)
 	if err != nil {
-		logger.Error(err, "invalid spec.preemption.victimQueues selector; default to select nothing",
-			"selector", newQueue.Spec.Preemption.VictimQueues)
-
-		victimQSelector = labels.Nothing()
+		logger.Error(err, "invalid spec.preemption",
+			"preemptionSpec", newQueue.Spec.Preemption)
 	}
 
 	syn.queueMgr.Update(newQueue.Name,
 		WithQuotaMax(alloc.FromResourceList(newQueue.Spec.Quota.Max)),
 		WithLabels(labels.Set(newQueue.Labels)),
-		WithVictimSelector(victimQSelector))
+		WithPreemptionConfig(preemptionCfg))
 }
 
 func (syn *Synchronizer) deleteQueue(obj any) {

@@ -7,10 +7,7 @@ import (
 	"sort"
 
 	configv1 "github.com/kaschnit/kaschnit-scheduler/apis/config/v1"
-	"github.com/kaschnit/kaschnit-scheduler/apis/scheduling"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	"github.com/kaschnit/kaschnit-scheduler/internal/boolstr"
-	"github.com/kaschnit/kaschnit-scheduler/internal/match"
 	"github.com/kaschnit/kaschnit-scheduler/internal/pdbeval"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -81,12 +78,6 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 		}
 	}
 
-	// Check the preemptor label.
-	// The pod is only eligible to preempt if it has this label.
-	if !boolstr.IsTrue(pod.Labels[scheduling.LabelKeyPreemptor]) {
-		return false, "Not eligible to preempt due to not a preemptor pod"
-	}
-
 	// Fetch the queue snapshot.
 	queueSnapshot, err := stateMgr.ReadQueueSnapshot()
 	if err != nil {
@@ -96,9 +87,9 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 
 	preemptorQ := queueSnapshot.QueueMgr.Get(pod)
 
-	// Pod is not eligible to preempt if its victims selects no victim queues.
-	if match.Nothing(preemptorQ.VictimSelector()) {
-		return false, "Not eligible to preempt due to queue's victim queue selector matching nothing."
+	// Pod is not eligible to preempt if its queue config says it can't preempt.
+	if !preemptorQ.CanPodPreemptOthers(pod) {
+		return false, "Not eligible to preempt due to queue's preemption config not allowing preemption."
 	}
 
 	// If no nominated node for this pod, then it has not yet been considered for preemption.
@@ -161,7 +152,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 				victimLogger.Info("Potential victim is not lower priority, does not exclude eligibility")
 				continue
 			}
-			if !boolstr.IsTrue(victimInfo.GetPod().Labels[scheduling.LabelKeyVictim]) {
+			if !preemptorQ.CanPodBePreemptedByOthers(victimInfo.GetPod()) {
 				// Terminating pod is not allowed to be a vicitm.
 				// So it is not a preemption victim, it's just a terminating pod.
 				victimLogger.Info("Potential victim does not have victim label, does not exclude eligibility")
@@ -282,8 +273,12 @@ func (p *preemptor) SelectVictimsOnNode(
 				continue
 			}
 
-			if !victimQ.IsVictimOf(preemptorQ) {
-				// Not a victim if its queue is not a victim.
+			if !preemptorQ.CanPreemptTo(pod, victimQ, victimInfo.GetPod()) {
+				// Not a victim if preemptor cannot preempt it.
+				continue
+			}
+			if !victimQ.CanBePreemptedBy(preemptorQ, pod, victimInfo.GetPod()) {
+				// Not a victim if preemptor cannot preempt it.
 				continue
 			}
 
