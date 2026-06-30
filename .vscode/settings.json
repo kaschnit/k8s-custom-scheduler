@@ -1,0 +1,4 @@
+{
+    "go.buildTags": "envtest",
+    "go.testTags": "envtest",
+}

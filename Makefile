@@ -8,6 +8,7 @@ SHELL = /usr/bin/env bash -o pipefail
 GO ?= go
 KUBECTL ?= $(GO) tool k8s.io/kubernetes/cmd/kubectl
 KIND ?= $(GO) tool sigs.k8s.io/kind
+KWOK ?= $(GO) too
 GOLANGCI_LINT ?= $(GO) tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 KO ?= $(GO) tool github.com/google/ko
 KUBEBUILDER ?= $(GO) tool sigs.k8s.io/kubebuilder/v4
@@ -16,8 +17,12 @@ CLIENT_GEN ?= $(GO) tool k8s.io/code-generator/cmd/client-gen
 LISTER_GEN ?= $(GO) tool k8s.io/code-generator/cmd/lister-gen
 INFORMER_GEN ?= $(GO) tool k8s.io/code-generator/cmd/informer-gen
 HELM ?= $(GO) tool helm.sh/helm/v4/cmd/helm
+SETUP_ENVTEST ?= $(GO) tool sigs.k8s.io/controller-runtime/tools/setup-envtest
 
 MODULE := $(shell $(GO) list -m)
+
+K8S_VERSION := $(shell $(GO) list -m -f '{{ .Version }}' k8s.io/api)
+ENVTEST_K8S_VERSION := $(shell echo $(K8S_VERSION) | sed -E 's/v0\.([0-9]+)\.[0-9]+/1.\1.0/')
 
 # KIND
 KIND_CLUSTER_NAME = "kind-scheduler-test"
@@ -129,6 +134,12 @@ test: TESTFLAGS := -v -race
 test: TESTTARGET := ./...
 test: generate ## Run unit tests.
 	$(GO) test $(TESTFLAGS) $(TESTTARGET)
+
+.PHONY: envtest
+envtest: TESTTARGET := ./...
+envtest: generate ## Run envtest tests.
+	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -i -p path)" \
+	go test -tags=envtest $(TESTTARGET)
 
 ##@ Build
 

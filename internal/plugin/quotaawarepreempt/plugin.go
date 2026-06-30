@@ -14,9 +14,11 @@ import (
 	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
 	fwk "k8s.io/kube-scheduler/framework"
+	"k8s.io/kubernetes/cmd/kube-scheduler/app"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
 	schedruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
@@ -27,6 +29,23 @@ const (
 	// PluginName is the name of the scheduling plugin.
 	PluginName = "QuotaAwarePreemption"
 )
+
+func WithPlugin() app.Option {
+	return app.WithPlugin(
+		PluginName,
+		func(ctx context.Context, configuration runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
+			logger := klog.FromContext(ctx).WithValues("plugin", PluginName)
+
+			fts := feature.NewSchedulerFeaturesFromGates(utilfeature.DefaultFeatureGate)
+
+			logger.Info("Starting plugin",
+				"features", fts)
+
+			factory := schedruntime.FactoryAdapter(fts, NewPlugin)
+			return factory(ctx, configuration, fh)
+		},
+	)
+}
 
 // Plugin is a kube-scheduler framework plugin for quota-aware preemption.
 type Plugin struct {
