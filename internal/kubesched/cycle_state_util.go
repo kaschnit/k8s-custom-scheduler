@@ -1,4 +1,4 @@
-package fwkutil
+package kubesched
 
 import (
 	"errors"

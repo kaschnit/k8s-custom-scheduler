@@ -4,37 +4,44 @@ package quotaawarepreempt_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/kaschnit/kaschnit-scheduler/internal/kubesched"
 	"github.com/kaschnit/kaschnit-scheduler/internal/plugin/quotaawarepreempt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/events"
+	schedulerconfigv1 "k8s.io/kube-scheduler/config/v1"
 	"k8s.io/kubernetes/pkg/scheduler"
-	schedulerconfig "k8s.io/kubernetes/pkg/scheduler/apis/config"
-	testdefaults "k8s.io/kubernetes/pkg/scheduler/apis/config/testing/defaults"
+	schedulerconfigapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	schedulerq "k8s.io/kubernetes/pkg/scheduler/backend/queue"
-	"k8s.io/kubernetes/pkg/scheduler/framework/parallelize"
 	"k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	nodefast "sigs.k8s.io/kwok/kustomize/stage/node/fast"
+	podfast "sigs.k8s.io/kwok/kustomize/stage/pod/fast"
 	kwokinternal "sigs.k8s.io/kwok/pkg/apis/internalversion"
 	kwokclient "sigs.k8s.io/kwok/pkg/client/clientset/versioned"
 	"sigs.k8s.io/kwok/pkg/config"
 	kwokctrl "sigs.k8s.io/kwok/pkg/kwok/controllers"
 )
+
+const schedulerName = "kaschnit-scheduler"
 
 func TestScheduler(t *testing.T) {
 	const (
@@ -72,7 +79,10 @@ func TestScheduler(t *testing.T) {
 	require.NoError(t, err, "Failed to get API group resources")
 
 	nodeInitStage, err := config.UnmarshalWithType[*kwokinternal.Stage](nodefast.DefaultNodeInit)
-	require.NoError(t, err, "Failed to unmarshal default node init")
+	require.NoError(t, err, "Failed to unmarshal default node init stage")
+
+	podInitStage, err := config.UnmarshalWithType[*kwokinternal.Stage](podfast.DefaultPodReady)
+	require.NoError(t, err, "Failed to unmarshal default pod read stage")
 
 	kwokCtrl, err := kwokctrl.NewController(kwokctrl.Config{
 		TypedClient:                       k8sClient,
@@ -90,6 +100,7 @@ func TestScheduler(t *testing.T) {
 		Clock:                             clck,
 		LocalStages: map[kwokinternal.StageResourceRef][]*kwokinternal.Stage{
 			{APIGroup: "v1", Kind: "Node"}: {nodeInitStage},
+			{APIGroup: "v1", Kind: "Pod"}:  {podInitStage},
 		},
 	})
 	require.NoError(t, err, "Failed to create KWOK controller")
@@ -105,7 +116,10 @@ func TestScheduler(t *testing.T) {
 				Annotations: map[string]string{"kwok.x-k8s.io/node": "fake"},
 				Labels:      map[string]string{"type": "kwok"},
 			},
-			Spec: corev1.NodeSpec{ProviderID: "kwok://fake-node"},
+			Spec: corev1.NodeSpec{
+				ProviderID: "kwok://fake-node",
+				Taints:     []corev1.Taint{},
+			},
 		}
 
 		_, err := k8sClient.CoreV1().Nodes().Create(t.Context(), node, metav1.CreateOptions{})
@@ -113,6 +127,7 @@ func TestScheduler(t *testing.T) {
 	}
 
 	t.Logf("Waiting for %d nodes to be ready", numNodes)
+	// TODO switch to eventual assertion.
 	err = wait.PollUntilContextTimeout(t.Context(), 1*time.Second, 10*time.Second, true,
 		func(ctx context.Context) (done bool, err error) {
 			nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
@@ -130,6 +145,32 @@ func TestScheduler(t *testing.T) {
 				for _, cond := range node.Status.Conditions {
 					if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
 						readyCount++
+
+						if len(node.Spec.Taints) > 0 {
+							updatedTaints := slices.DeleteFunc(slices.Clone(node.Spec.Taints),
+								func(tnt corev1.Taint) bool { return tnt.Key == "node.kubernetes.io/not-ready" })
+							if len(updatedTaints) < len(node.Spec.Taints) {
+								patch, err := json.Marshal(map[string]any{
+									"spec": map[string]any{
+										"taints": updatedTaints,
+									},
+								})
+								require.NoError(t, err, "Failed to marshal node taint patch")
+
+								_, err = k8sClient.CoreV1().Nodes().Patch(
+									t.Context(),
+									node.Name,
+									types.MergePatchType,
+									patch,
+									metav1.PatchOptions{},
+								)
+								if err != nil {
+									t.Logf("Failed to remove taint from node: %s", err)
+									return false, err
+								}
+							}
+						}
+
 						break
 					}
 				}
@@ -140,60 +181,138 @@ func TestScheduler(t *testing.T) {
 		})
 	require.NoError(t, err, "Nodes never became ready")
 
-	t.Log("Creating scheduler plugin registry")
-	schedulerPluginRegistry := make(runtime.Registry)
-	quotaawarepreempt.WithPlugin()(schedulerPluginRegistry)
+	t.Run("schedule one pod", func(t *testing.T) {
+		kubeScheduler := newKubeScheduler(t, k8sConfig, k8sClient, dynClient)
 
-	t.Log("Building scheduler profile")
-	plugins := testdefaults.ExpandedPluginsV1.DeepCopy()
-	plugins.MultiPoint = schedulerconfig.PluginSet{
-		Enabled: []schedulerconfig.Plugin{
-			{Name: quotaawarepreempt.PluginName},
-		},
-	}
-	plugins.PostFilter = schedulerconfig.PluginSet{
-		Enabled: []schedulerconfig.Plugin{
-			{Name: quotaawarepreempt.PluginName},
-		},
-		Disabled: []schedulerconfig.Plugin{
-			{Name: "*"},
-		},
-	}
-	pluginConfig := slices.Clone(testdefaults.PluginConfigsV1)
+		pod := &corev1.Pod{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pod-1",
+			},
+			Spec: corev1.PodSpec{
+				SchedulerName: schedulerName,
+				Containers: []corev1.Container{
+					{
+						Name:            "test-container",
+						Image:           "fake-image",
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("1Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		_, err = k8sClient.CoreV1().Pods(corev1.NamespaceDefault).Create(t.Context(), pod, metav1.CreateOptions{})
+		require.NoError(t, err, "Failed to create pod")
+
+		podList, err := k8sClient.CoreV1().Pods(corev1.NamespaceDefault).List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, err, "Failed to list pods before scheduling")
+		assert.Len(t, podList.Items, 1, "Pod list should have 1 item")
+		assert.Empty(t, podList.Items[0].Spec.NodeName, "Pod should not have spec.nodeName before scheduling")
+		assert.Equal(t, corev1.PodPending, podList.Items[0].Status.Phase, "Pod should be pending before scheduling")
+
+		kubeScheduler.ScheduleOne(t.Context())
+
+		time.Sleep(3 * time.Second) // TODO use eventual assertion
+
+		podList, err = k8sClient.CoreV1().Pods(corev1.NamespaceDefault).List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, err, "Failed to list pods after scheduling")
+		assert.Len(t, podList.Items, 1, "Pod list should have 1 item")
+		assert.NotEmpty(t, podList.Items[0].Spec.NodeName, "Pod should have spec.nodeName after scheduling")
+		assert.NotEqual(t, corev1.PodPending, podList.Items[0].Status.Phase, "Pod should not be pending before scheduling")
+	})
+}
+
+func newKubeScheduler(
+	t *testing.T,
+	k8sConfig *rest.Config,
+	k8sClient kubernetes.Interface,
+	dynClient dynamic.Interface,
+) *scheduler.Scheduler {
+	kubeSchedulerConfig := newKubeSchedulerConfig(t)
+
+	t.Log("Creating scheduler informer factories")
+	sharedInformerFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+	sharedInformerFactory.Start(t.Context().Done())
+	sharedInformerFactory.WaitForCacheSync(t.Context().Done())
+
+	dynInformerFactory := dynamicinformer.NewDynamicSharedInformerFactory(dynClient, 0)
+	dynInformerFactory.Start(t.Context().Done())
+	dynInformerFactory.WaitForCacheSync(t.Context().Done())
 
 	t.Log("Creating scheduler")
 	// TODO: consider using app.Setup() instead of scheduler.New(). This unfortunately
 	// requires CLI-like inputs (path to kubeconfig file) so it's tricky to do with envtest;
 	// however it makes it more aligned with the scheduler cmd's main.go and automates handling
 	// of default plugin registration.
-	scheduler, err := scheduler.New(
+	kubeScheduler, err := scheduler.New(
 		t.Context(),
 		k8sClient,
-		informers.NewSharedInformerFactory(k8sClient, 0),
-		dynamicinformer.NewDynamicSharedInformerFactory(dynClient, 0),
+		sharedInformerFactory,
+		dynInformerFactory,
 		events.NewEventBroadcasterAdapter(k8sClient).NewRecorder,
 		scheduler.WithComponentConfigVersion("kubescheduler.config.k8s.io/v1"),
 		scheduler.WithKubeConfig(k8sConfig),
-		scheduler.WithProfiles(schedulerconfig.KubeSchedulerProfile{
-			SchedulerName: "kaschnit-scheduler",
-			Plugins:       plugins,
-			PluginConfig:  pluginConfig,
-		}),
-		scheduler.WithPercentageOfNodesToScore(new(int32(schedulerconfig.DefaultPercentageOfNodesToScore))),
-		scheduler.WithFrameworkOutOfTreeRegistry(schedulerPluginRegistry),
-		scheduler.WithPodMaxBackoffSeconds(int64(schedulerq.DefaultPodMaxBackoffDuration.Seconds())),
-		scheduler.WithPodInitialBackoffSeconds(int64(schedulerq.DefaultPodInitialBackoffDuration.Seconds())),
-		scheduler.WithPodMaxInUnschedulablePodsDuration(schedulerq.DefaultPodMaxBackoffDuration),
-		scheduler.WithParallelism(int32(parallelize.DefaultParallelism)),
+		scheduler.WithFrameworkOutOfTreeRegistry(newPluginRegistry(t)),
+		scheduler.WithProfiles(kubeSchedulerConfig.Profiles...),
+		scheduler.WithPercentageOfNodesToScore(kubeSchedulerConfig.PercentageOfNodesToScore),
+		scheduler.WithPodMaxBackoffSeconds(kubeSchedulerConfig.PodMaxBackoffSeconds),
+		scheduler.WithPodInitialBackoffSeconds(kubeSchedulerConfig.PodInitialBackoffSeconds),
+		scheduler.WithPodMaxInUnschedulablePodsDuration(schedulerq.DefaultPodMaxInUnschedulablePodsDuration),
+		scheduler.WithParallelism(kubeSchedulerConfig.Parallelism),
 	)
 	require.NoError(t, err, "Failed to create scheduler instance")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	t.Cleanup(cancel)
+	return kubeScheduler
+}
 
-	t.Log("Running scheduler")
-	scheduler.Run(ctx)
+func newKubeSchedulerConfig(t *testing.T) schedulerconfigapi.KubeSchedulerConfiguration {
+	t.Log("Building scheduler profile")
+	kubeSchedulerConfig, err := kubesched.ToConfigAPIWithDefaults(schedulerconfigv1.KubeSchedulerConfiguration{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: schedulerconfigv1.SchemeGroupVersion.String(),
+			Kind:       "KubeSchedulerConfiguration",
+		},
+		Profiles: []schedulerconfigv1.KubeSchedulerProfile{
+			{
+				SchedulerName: new(schedulerName),
+				Plugins: &schedulerconfigv1.Plugins{
+					MultiPoint: schedulerconfigv1.PluginSet{
+						Enabled: []schedulerconfigv1.Plugin{
+							{Name: quotaawarepreempt.PluginName},
+						},
+					},
+					PostFilter: schedulerconfigv1.PluginSet{
+						Enabled: []schedulerconfigv1.Plugin{
+							{Name: quotaawarepreempt.PluginName},
+						},
+						Disabled: []schedulerconfigv1.Plugin{
+							{Name: "*"},
+						},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to create KubeSchedulerConfiguration")
 
-	// TODO: finish this test.
-	assert.True(t, false, "Intentional fail to produce logs")
+	return kubeSchedulerConfig
+}
+
+func newPluginRegistry(t *testing.T) runtime.Registry {
+	t.Log("Building plugin registry")
+	pluginRegistry := make(runtime.Registry)
+
+	err := quotaawarepreempt.Register(pluginRegistry)
+	require.NoError(t, err, "Failed to registery scheduler plugin")
+
+	return pluginRegistry
 }

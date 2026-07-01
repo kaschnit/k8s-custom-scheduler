@@ -1,7 +1,7 @@
 package quotaawarepreempt
 
 import (
-	"github.com/kaschnit/kaschnit-scheduler/internal/fwkutil"
+	"github.com/kaschnit/kaschnit-scheduler/internal/kubesched"
 	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	fwk "k8s.io/kube-scheduler/framework"
 )
@@ -49,7 +49,7 @@ func NewStateManager(cycleState fwk.CycleState) *StateManager {
 
 // ReadQueueSnapshot reads the queue snapshot from the scheduling cycle state.
 func (mgr *StateManager) ReadQueueSnapshot() (*QueueSnapshotState, error) {
-	return fwkutil.ReadState[*QueueSnapshotState](mgr.cycleState, stateKeyQueueSnapshot)
+	return kubesched.ReadState[*QueueSnapshotState](mgr.cycleState, stateKeyQueueSnapshot)
 }
 
 // WriteQueueSnapshot writes the queue snapshot to the scheduling cycle state.

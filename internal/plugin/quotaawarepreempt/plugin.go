@@ -10,7 +10,7 @@ import (
 	schedclients "github.com/kaschnit/kaschnit-scheduler/client/clientset/scheduling"
 	schedinformers "github.com/kaschnit/kaschnit-scheduler/client/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	"github.com/kaschnit/kaschnit-scheduler/internal/fwkutil"
+	"github.com/kaschnit/kaschnit-scheduler/internal/kubesched"
 	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,21 +30,24 @@ const (
 	PluginName = "QuotaAwarePreemption"
 )
 
+func Register(registry schedruntime.Registry) error {
+	return registry.Register(PluginName, PluginFactory)
+}
+
 func WithPlugin() app.Option {
-	return app.WithPlugin(
-		PluginName,
-		func(ctx context.Context, configuration runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
-			logger := klog.FromContext(ctx).WithValues("plugin", PluginName)
+	return app.WithPlugin(PluginName, PluginFactory)
+}
 
-			fts := feature.NewSchedulerFeaturesFromGates(utilfeature.DefaultFeatureGate)
+func PluginFactory(ctx context.Context, configuration runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
+	logger := klog.FromContext(ctx).WithValues("plugin", PluginName)
 
-			logger.Info("Starting plugin",
-				"features", fts)
+	fts := feature.NewSchedulerFeaturesFromGates(utilfeature.DefaultFeatureGate)
 
-			factory := schedruntime.FactoryAdapter(fts, NewPlugin)
-			return factory(ctx, configuration, fh)
-		},
-	)
+	logger.Info("Starting plugin",
+		"features", fts)
+
+	factory := schedruntime.FactoryAdapter(fts, NewPlugin)
+	return factory(ctx, configuration, fh)
 }
 
 // Plugin is a kube-scheduler framework plugin for quota-aware preemption.
@@ -190,7 +193,7 @@ func (plugin *Plugin) PreFilter(
 	if len(pod.Status.NominatedNodeName) > 0 && exceedsQuota {
 		logger.Info("Pod with nominated node does not fit in quota, recomputing quota")
 
-		podIDsOnNode, err := fwkutil.GetPodIDsOnNode(plugin.fh, pod.Status.NominatedNodeName)
+		podIDsOnNode, err := kubesched.GetPodIDsOnNode(plugin.fh, pod.Status.NominatedNodeName)
 		if err != nil {
 			// Nominated node doesn't seem to exist anymore, so scheduling on this node
 			// is not possible and not resolvable by preemption.

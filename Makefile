@@ -133,7 +133,7 @@ lint-fix: generate ## Run linters and perform fixes.
 test: TESTFLAGS := -v -race
 test: TESTTARGET := ./...
 test: generate ## Run unit tests.
-	$(GO) test $(TESTFLAGS) $(TESTTARGET)
+	$(GO) test -tags=unit $(TESTFLAGS) $(TESTTARGET)
 
 .PHONY: envtest
 envtest: TESTTARGET := ./...
