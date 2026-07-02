@@ -44,7 +44,7 @@ import (
 
 const schedulerName = "kaschnit-scheduler"
 
-func TestScheduler(t *testing.T) {
+func TestPlugin(t *testing.T) {
 	const (
 		numNodes = 10
 	)
