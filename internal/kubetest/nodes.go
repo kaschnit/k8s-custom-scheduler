@@ -67,10 +67,10 @@ func (mgr *KWOKNodeManager) WaitForNodesReady(ctx context.Context, opts WaitForN
 	logger := klog.FromContext(ctx)
 
 	if opts.PollInterval == 0 {
-		opts.PollInterval = time.Second
+		opts.PollInterval = 250 * time.Millisecond
 	}
 	if opts.Timeout == 0 {
-		opts.Timeout = time.Minute
+		opts.Timeout = 30 * time.Second
 	}
 
 	return wait.PollUntilContextTimeout(ctx, opts.PollInterval, opts.Timeout, true,
@@ -126,25 +126,57 @@ func (mgr *KWOKNodeManager) WaitForNodesReady(ctx context.Context, opts WaitForN
 		})
 }
 
-func (mgr *KWOKNodeManager) CreateNodesAndWaitForReady(
+func (mgr *KWOKNodeManager) CreateAndWaitForReady(
 	ctx context.Context,
 	prefix string,
 	count int,
 	opts WaitForNodesReadyOpts,
-) error {
-
-	if _, err := mgr.CreateNodes(ctx, prefix, count); err != nil {
-		return err
+) ([]*corev1.Node, error) {
+	nodes, err := mgr.CreateNodes(ctx, prefix, count)
+	if err != nil {
+		return nodes, err
 	}
 
 	if err := mgr.WaitForNodesReady(ctx, opts); err != nil {
+		return nodes, err
+	}
+
+	return nodes, nil
+}
+
+func (mgr *KWOKNodeManager) DeleteAll(ctx context.Context) error {
+	return mgr.nodeClient.DeleteCollection(ctx,
+		metav1.DeleteOptions{
+			GracePeriodSeconds: new(int64(0)),
+			PropagationPolicy:  new(metav1.DeletePropagationBackground),
+		},
+		metav1.ListOptions{LabelSelector: "type=kwok"})
+}
+
+type WaitForNodesDeleteOpts struct {
+	PollInterval time.Duration
+	Timeout      time.Duration
+}
+
+func (mgr *KWOKNodeManager) DeleteAllWait(ctx context.Context, opts WaitForNodesDeleteOpts) error {
+	if opts.PollInterval == 0 {
+		opts.PollInterval = 250 * time.Millisecond
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 30 * time.Second
+	}
+
+	if err := mgr.DeleteAll(ctx); err != nil {
 		return err
 	}
 
-	return nil
-}
+	return wait.PollUntilContextTimeout(ctx, opts.PollInterval, opts.Timeout, true,
+		func(ctx context.Context) (done bool, err error) {
+			nodeList, err := mgr.nodeClient.List(ctx, metav1.ListOptions{LabelSelector: "type=kwok"})
+			if err != nil {
+				return false, err
+			}
 
-func (mgr *KWOKNodeManager) DeleteAllNodes(ctx context.Context) error {
-	return mgr.nodeClient.DeleteCollection(ctx, *metav1.NewDeleteOptions(0),
-		metav1.ListOptions{LabelSelector: "type=kwok"})
+			return len(nodeList.Items) == 0, nil
+		})
 }
