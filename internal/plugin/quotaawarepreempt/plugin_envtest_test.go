@@ -50,7 +50,7 @@ func TestPlugin(t *testing.T) {
 
 	parentT := t
 
-	t.Run("Preempt one in same queue for capacity preemption", func(t *testing.T) {
+	t.Run("Preempt one in same queue for capacity", func(t *testing.T) {
 		tCtx, err := kubetest.NewSchedulerContext(t.Context(), testEnv.Config)
 		require.NoError(t, err, "Failed to create test context")
 		t.Cleanup(func() { tCtx.CleanUp(parentT.Context()) })
@@ -175,7 +175,7 @@ func TestPlugin(t *testing.T) {
 		})
 	})
 
-	t.Run("Preempt one in same queue quota preemption", func(t *testing.T) {
+	t.Run("Preempt one in same queue for quota", func(t *testing.T) {
 		tCtx, err := kubetest.NewSchedulerContext(t.Context(), testEnv.Config)
 		require.NoError(t, err, "Failed to create test context")
 		t.Cleanup(func() { tCtx.CleanUp(parentT.Context()) })
