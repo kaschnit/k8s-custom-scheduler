@@ -18,15 +18,15 @@ tool (
 require (
 	github.com/kaschnit/immut v0.0.0-20260628195142-985faf1d2e94
 	github.com/stretchr/testify v1.11.1
-	k8s.io/api v0.36.1
-	k8s.io/apimachinery v0.36.1
-	k8s.io/apiserver v0.36.1
-	k8s.io/client-go v0.36.1
-	k8s.io/component-base v0.36.1
-	k8s.io/component-helpers v0.36.1
+	k8s.io/api v0.36.2
+	k8s.io/apimachinery v0.36.2
+	k8s.io/apiserver v0.36.2
+	k8s.io/client-go v0.36.2
+	k8s.io/component-base v0.36.2
+	k8s.io/component-helpers v0.36.2
 	k8s.io/klog/v2 v2.140.0
-	k8s.io/kube-scheduler v0.36.1
-	k8s.io/kubernetes v1.36.1
+	k8s.io/kube-scheduler v0.36.2
+	k8s.io/kubernetes v1.36.2
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/kwok v0.8.0
@@ -461,14 +461,14 @@ require (
 	k8s.io/code-generator v0.36.1 // indirect
 	k8s.io/controller-manager v0.36.1 // indirect
 	k8s.io/csi-translation-lib v0.36.1 // indirect
-	k8s.io/dynamic-resource-allocation v0.36.1 // indirect
+	k8s.io/dynamic-resource-allocation v0.36.2 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250922181213-ec3ebc5fd46b // indirect
-	k8s.io/kms v0.36.1 // indirect
+	k8s.io/kms v0.36.2 // indirect
 	k8s.io/kube-openapi v0.0.0-20260427204847-8949caaa1199 // indirect
 	k8s.io/kubectl v0.36.1 // indirect
-	k8s.io/kubelet v0.36.1 // indirect
+	k8s.io/kubelet v0.36.2 // indirect
 	k8s.io/metrics v0.36.1 // indirect
-	k8s.io/streaming v0.36.1 // indirect
+	k8s.io/streaming v0.36.2 // indirect
 	mvdan.cc/gofumpt v0.9.2 // indirect
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
 	oras.land/oras-go/v2 v2.6.0 // indirect

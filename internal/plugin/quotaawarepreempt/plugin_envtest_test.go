@@ -60,8 +60,7 @@ func TestPlugin(t *testing.T) {
 			kubetest.NewPC("low", -1000, true))
 		require.NoError(t, err, "Failed to create priority classes")
 
-		_, err = tCtx.NodeMgr.CreateAndWaitForReady(t.Context(), 1,
-			kubetest.WaitForNodesReadyOpts{})
+		_, err = tCtx.NodeMgr.CreateAndWaitForReady(t.Context(), 1, kubetest.WaitForNodesReadyOpts{})
 		require.NoError(t, err, "Failed to create nodes and wait for ready")
 
 		allocatableByNode, err := tCtx.NodeMgr.GetAllocatableByNode(t.Context())
@@ -119,7 +118,7 @@ func TestPlugin(t *testing.T) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
-			kubeassert.PodRunning(c, t.Context(), gotVictim)
+			kubeassert.PodRunning(c, gotVictim)
 		})
 
 		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -143,7 +142,7 @@ func TestPlugin(t *testing.T) {
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
-			kubeassert.PodNominatedToPreempt(c, t.Context(), gotPreemptor, gotVictim)
+			kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
 			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -157,7 +156,7 @@ func TestPlugin(t *testing.T) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
-			kubeassert.PodRunningOnNode(c, t.Context(), gotPreemptor, gotVictim.Spec.NodeName)
+			kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
@@ -171,7 +170,7 @@ func TestPlugin(t *testing.T) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
-			kubeassert.PodUnschedulable(c, t.Context(), gotVictim)
+			kubeassert.PodUnschedulable(c, gotVictim)
 		})
 	})
 
@@ -185,8 +184,7 @@ func TestPlugin(t *testing.T) {
 			kubetest.NewPC("low", -1000, true))
 		require.NoError(t, err, "Failed to create priority classes")
 
-		_, err = tCtx.NodeMgr.CreateAndWaitForReady(t.Context(), 10,
-			kubetest.WaitForNodesReadyOpts{})
+		_, err = tCtx.NodeMgr.CreateAndWaitForReady(t.Context(), 10, kubetest.WaitForNodesReadyOpts{})
 		require.NoError(t, err, "Failed to create nodes and wait for ready")
 
 		_, err = tCtx.QMgr.Create(t.Context(), &schedulingv1.Queue{
@@ -221,7 +219,7 @@ func TestPlugin(t *testing.T) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
-			kubeassert.PodRunning(c, t.Context(), gotVictim)
+			kubeassert.PodRunning(c, gotVictim)
 		})
 
 		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -245,7 +243,7 @@ func TestPlugin(t *testing.T) {
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
-			kubeassert.PodNominatedToPreempt(c, t.Context(), gotPreemptor, gotVictim)
+			kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
 			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -259,7 +257,7 @@ func TestPlugin(t *testing.T) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
-			kubeassert.PodRunningOnNode(c, t.Context(), gotPreemptor, gotVictim.Spec.NodeName)
+			kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
@@ -273,9 +271,129 @@ func TestPlugin(t *testing.T) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
-			kubeassert.PodUnschedulable(c, t.Context(), gotVictim)
+			kubeassert.PodUnschedulable(c, gotVictim)
 		})
 	})
+
+	// // TODO: fix this test; it causes a panic in preemption.go when scheduling the preemptor pod.
+	// // For some reason one of the pods from nodeInfo is nil in SelectVictimsOnNode().
+	// // Could be any of the following, in order from best to worse case:
+	// // - Test setup bug
+	// // - Issue with test tooling (envtest, KWOK)
+	// // - QuotaAwarePreemption plugin bug
+	// // - Scheduling Framework bug
+	// //
+	// // The solution is not to add a nil check for victim in preemption.go; this makes preemption fail
+	// // because the victim otherwise is not evaluated for preemption, resulting in test failure.
+	// t.Run("Preempt multiple in same queue for quota", func(t *testing.T) {
+	// 	tCtx, err := kubetest.NewSchedulerContext(t.Context(), testEnv.Config)
+	// 	require.NoError(t, err, "Failed to create test context")
+	// 	t.Cleanup(func() { tCtx.CleanUp(parentT.Context()) })
+
+	// 	_, err = tCtx.PCMgr.Create(t.Context(),
+	// 		kubetest.NewPC("high", 1000, true),
+	// 		kubetest.NewPC("low", -1000, true))
+	// 	require.NoError(t, err, "Failed to create priority classes")
+
+	// 	_, err = tCtx.NodeMgr.CreateAndWaitForReady(t.Context(), 1, kubetest.WaitForNodesReadyOpts{})
+	// 	require.NoError(t, err, "Failed to create nodes and wait for ready")
+
+	// 	_, err = tCtx.QMgr.Create(t.Context(), &schedulingv1.Queue{
+	// 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"},
+	// 		Spec: schedulingv1.QueueSpec{
+	// 			Quota: schedulingv1.QuotaSpec{
+	// 				Max: corev1.ResourceList{
+	// 					corev1.ResourceCPU:    resource.MustParse("4"),
+	// 					corev1.ResourceMemory: resource.MustParse("5Gi"),
+	// 				},
+	// 			},
+	// 			Preemption: schedulingv1.PreemptionSpec{
+	// 				Preempts:    schedulingv1.PreemptsEverything(),
+	// 				PreemptedBy: schedulingv1.PreemptedByEverything(),
+	// 			},
+	// 		},
+	// 	})
+	// 	require.NoError(t, err, "Failed to create queues")
+
+	// 	// Combined the three victims take up entire quota.
+	// 	victims := [3]*corev1.Pod{
+	// 		newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+	// 			corev1.ResourceCPU:    resource.MustParse("2"),
+	// 			corev1.ResourceMemory: resource.MustParse("1Gi"),
+	// 		}),
+	// 		newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+	// 			corev1.ResourceCPU:    resource.MustParse("1"),
+	// 			corev1.ResourceMemory: resource.MustParse("1Gi"),
+	// 		}),
+	// 		newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+	// 			corev1.ResourceCPU:    resource.MustParse("1"),
+	// 			corev1.ResourceMemory: resource.MustParse("1Gi"),
+	// 		}),
+	// 	}
+	// 	for _, victim := range victims {
+	// 		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
+	// 			victim, metav1.CreateOptions{})
+	// 		require.NoError(t, err, "Failed to create pod")
+	// 	}
+
+	// 	// Schedule victim pods
+	// 	tCtx.Scheduler.ScheduleOne(t.Context())
+	// 	tCtx.Scheduler.ScheduleOne(t.Context())
+	// 	tCtx.Scheduler.ScheduleOne(t.Context())
+	// 	kubeassert.Eventually(t, func(c *assert.CollectT) {
+	// 		gotVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
+	// 			metav1.ListOptions{})
+	// 		require.NoError(c, err, "Failed to list pods")
+	// 		assert.Lenf(t, gotVictims.Items, len(victims), "Expected %d pods", len(victims))
+	// 		for _, gotVictim := range gotVictims.Items {
+	// 			require.NoError(c, err, "Failed to get pod")
+	// 			kubeassert.PodRunning(c, &gotVictim)
+	// 		}
+	// 	})
+
+	// 	gotVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
+	// 		metav1.ListOptions{})
+	// 	require.NoError(t, err, "Failed to list pods")
+	// 	assert.Lenf(t, gotVictims.Items, len(victims), "Expected %d pods", len(victims))
+
+	// 	preemptor := newPodForQueue(tCtx, "tenant-a", "high", corev1.ResourceList{
+	// 		corev1.ResourceCPU:    resource.MustParse("3"),
+	// 		corev1.ResourceMemory: resource.MustParse("1Gi"),
+	// 	})
+	// 	_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
+	// 		preemptor, metav1.CreateOptions{})
+	// 	require.NoError(t, err)
+
+	// 	// Perform preemption, resulting in nominated node for preemptor pod
+	// 	tCtx.Scheduler.ScheduleOne(t.Context())
+	// 	kubeassert.Eventually(t, func(c *assert.CollectT) {
+	// 		gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
+	// 			preemptor.Name, metav1.GetOptions{})
+	// 		require.NoError(c, err, "Failed to get preemptor pod")
+
+	// 		// Preemptor pod nominated for one of the victims' nodes.
+	// 		// Assumption is that all victims are on same node.
+	// 		// This is currently a limitation of the preemption algorithm.
+	// 		kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
+
+	// 		// Exactly two victim pods had to be chosen to make room for preemptor.
+	// 		// It's not important which two, choice is arbitrary.
+	// 		// That leaves 1 preemptor pod and 1 victim pod.
+	// 		remainingVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
+	// 			metav1.ListOptions{})
+	// 		require.NoError(t, err, "Failed to list pods")
+	// 		assert.Len(t, remainingVictims.Items, 2)
+	// 	})
+
+	// 	// Perform scheduling for nominated node
+	// 	tCtx.Scheduler.ScheduleOne(t.Context())
+	// 	kubeassert.Eventually(t, func(c *assert.CollectT) {
+	// 		gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
+	// 			preemptor.Name, metav1.GetOptions{})
+	// 		require.NoError(c, err, "Failed to get preemptor pod")
+	// 		kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
+	// 	})
+	// })
 }
 
 func newPodForQueue(

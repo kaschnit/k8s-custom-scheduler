@@ -6,7 +6,9 @@ import (
 )
 
 // IsErrNotFound asserts that err indicatates a the Kubernetes resource was not found.
-func IsErrNotFound(t assert.TestingT, err error, msg ...any) {
+func IsErrNotFound(t TestingT, err error, msg ...any) {
+	t.Helper()
+
 	if len(msg) == 0 {
 		msg = []any{"Resource should not exist"}
 	}

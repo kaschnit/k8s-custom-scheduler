@@ -26,6 +26,7 @@ import (
 	kubeschedcfgapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	kubeschedq "k8s.io/kubernetes/pkg/scheduler/backend/queue"
 	fwkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
+	"k8s.io/kubernetes/pkg/scheduler/profile"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	nodefast "sigs.k8s.io/kwok/kustomize/stage/node/fast"
@@ -176,6 +177,11 @@ func (tCtx *SchedulerContext) CleanUp(ctx context.Context) error {
 	errs = errors.Join(errs, tCtx.QMgr.DeleteAll(ctx))
 	errs = errors.Join(errs, tCtx.PCMgr.DeleteAll(ctx))
 	errs = errors.Join(errs, tCtx.NodeMgr.DeleteAllWait(ctx, WaitForNodesDeleteOpts{}))
+	errs = errors.Join(errs,
+		tCtx.K8sClient.CoreV1().Namespaces().Delete(ctx, tCtx.Namespace, metav1.DeleteOptions{
+			GracePeriodSeconds: new(int64(0)),
+			PropagationPolicy:  new(metav1.DeletePropagationBackground),
+		}))
 
 	if tCtx.InformerFactory != nil {
 		tCtx.InformerFactory.Shutdown()
@@ -256,16 +262,23 @@ func newKubeScheduler(
 		return nil, err
 	}
 
+	evtBroadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: k8sClient.EventsV1()})
+	go func() {
+		<-ctx.Done()
+		evtBroadcaster.Shutdown()
+	}()
+	evtBroadcaster.StartRecordingToSink(ctx.Done())
+
 	// TODO: consider using app.Setup() instead of scheduler.New(). This unfortunately
 	// requires CLI-like inputs (path to kubeconfig file) so it's tricky to do with envtest;
 	// however it makes it more aligned with the scheduler cmd's main.go and automates handling
 	// of default plugin registration.
-	return scheduler.New(
+	kubeScheduler, err := scheduler.New(
 		ctx,
 		k8sClient,
 		infFactory,
 		dynInfFactory,
-		events.NewEventBroadcasterAdapter(k8sClient).NewRecorder,
+		profile.NewRecorderFactory(evtBroadcaster),
 		scheduler.WithComponentConfigVersion("kubescheduler.config.k8s.io/v1"),
 		scheduler.WithKubeConfig(k8sConfig),
 		scheduler.WithFrameworkOutOfTreeRegistry(pluginRegistry),
@@ -276,6 +289,11 @@ func newKubeScheduler(
 		scheduler.WithPodMaxInUnschedulablePodsDuration(kubeschedq.DefaultPodMaxInUnschedulablePodsDuration),
 		scheduler.WithParallelism(kubeSchedulerConfig.Parallelism),
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return kubeScheduler, nil
 }
 
 func newKubeSchedulerConfig() (kubeschedcfgapi.KubeSchedulerConfiguration, error) {
