@@ -14,7 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 // TODO: Additional tests to add:
@@ -50,7 +50,7 @@ func TestPlugin(t *testing.T) {
 
 	parentT := t
 
-	t.Run("Basic capacity preemption", func(t *testing.T) {
+	t.Run("Preempt one in same queue for capacity preemption", func(t *testing.T) {
 		tCtx, err := kubetest.NewSchedulerContext(t.Context(), testEnv.Config)
 		require.NoError(t, err, "Failed to create test context")
 		t.Cleanup(func() { tCtx.CleanUp(parentT.Context()) })
@@ -108,7 +108,7 @@ func TestPlugin(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create queues")
 
-		victim := newPodForQueue(types.NamespacedName{Name: "victim-1"}, "tenant-a", "low", nodeAllocatable)
+		victim := newPodForQueue(tCtx, "tenant-a", "low", nodeAllocatable)
 		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
 			victim, metav1.CreateOptions{})
 		require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestPlugin(t *testing.T) {
 			victim.Name, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get victim pod")
 
-		preemptor := newPodForQueue(types.NamespacedName{Name: "preemptor-1"}, "tenant-a", "high",
+		preemptor := newPodForQueue(tCtx, "tenant-a", "high",
 			corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
@@ -175,7 +175,7 @@ func TestPlugin(t *testing.T) {
 		})
 	})
 
-	t.Run("Basic quota preemption", func(t *testing.T) {
+	t.Run("Preempt one in same queue quota preemption", func(t *testing.T) {
 		tCtx, err := kubetest.NewSchedulerContext(t.Context(), testEnv.Config)
 		require.NoError(t, err, "Failed to create test context")
 		t.Cleanup(func() { tCtx.CleanUp(parentT.Context()) })
@@ -206,7 +206,7 @@ func TestPlugin(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create queues")
 
-		victim := newPodForQueue(types.NamespacedName{Name: "victim-1"}, "tenant-a", "low",
+		victim := newPodForQueue(tCtx, "tenant-a", "low",
 			corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("3"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
@@ -228,7 +228,7 @@ func TestPlugin(t *testing.T) {
 			victim.Name, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get victim pod")
 
-		preemptor := newPodForQueue(types.NamespacedName{Name: "preemptor-1"}, "tenant-a", "high",
+		preemptor := newPodForQueue(tCtx, "tenant-a", "high",
 			corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
@@ -279,18 +279,18 @@ func TestPlugin(t *testing.T) {
 }
 
 func newPodForQueue(
-	name types.NamespacedName,
+	tCtx *kubetest.SchedulerContext,
 	queue string,
 	priorityClassName string,
 	requests corev1.ResourceList,
 ) *corev1.Pod {
-	pod := newPod(name, requests)
+	pod := newPod(tCtx, requests)
 	pod.Labels[schedulingapi.LabelKeyQueue] = queue
 	pod.Spec.PriorityClassName = priorityClassName
 	return pod
 }
 
-func newPod(name types.NamespacedName, requests corev1.ResourceList) *corev1.Pod {
+func newPod(tCtx *kubetest.SchedulerContext, requests corev1.ResourceList) *corev1.Pod {
 	if requests == nil {
 		requests = corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("1"),
@@ -304,8 +304,8 @@ func newPod(name types.NamespacedName, requests corev1.ResourceList) *corev1.Pod
 			Kind:       "Pod",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name.Name,
-			Namespace: name.Namespace,
+			Name:      string(uuid.NewUUID()),
+			Namespace: tCtx.Namespace,
 			Labels:    make(map[string]string),
 		},
 		Spec: corev1.PodSpec{
