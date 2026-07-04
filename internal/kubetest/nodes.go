@@ -67,10 +67,10 @@ func (mgr *KWOKNodeManager) WaitForNodesReady(ctx context.Context, opts WaitForN
 	logger := klog.FromContext(ctx)
 
 	if opts.PollInterval == 0 {
-		opts.PollInterval = 250 * time.Millisecond
+		opts.PollInterval = 500 * time.Millisecond
 	}
 	if opts.Timeout == 0 {
-		opts.Timeout = 30 * time.Second
+		opts.Timeout = 10 * time.Second
 	}
 
 	return wait.PollUntilContextTimeout(ctx, opts.PollInterval, opts.Timeout, true,
