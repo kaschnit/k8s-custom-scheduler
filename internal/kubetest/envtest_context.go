@@ -36,6 +36,8 @@ import (
 	kwokctrl "sigs.k8s.io/kwok/pkg/kwok/controllers"
 )
 
+// StartEnvTest creates and envtest environment and starts it.
+// This loads in all CRDs necessary for testing the scheduler.
 func StartEnvTest() (*envtest.Environment, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -60,9 +62,14 @@ func StartEnvTest() (*envtest.Environment, error) {
 	return testEnv, nil
 }
 
+// SchedulerName is a constant scheduler name to use across tests for uniformity.
+// This allows writing helper functions to build pods and the scheduler without wiring
+// through the scheduler name to be used. The name itself does not really matter, it's
+// purpose is just to match up a pod to a scheduling profile.
 const SchedulerName = "kaschnit-scheduler"
 
-type EnvTestContext struct {
+// SchedulerContext contains all clients, configs, etc. needed for testing the scheduler.
+type SchedulerContext struct {
 	Namespace          string
 	Clock              clock.Clock
 	K8sCfg             *rest.Config
@@ -80,7 +87,8 @@ type EnvTestContext struct {
 	KWOKController     *kwokctrl.Controller
 }
 
-func NewEnvTestContext(ctx context.Context, k8sConfig *rest.Config) (*EnvTestContext, error) {
+// NewSchedulerContext builds an [SchedulerContext].
+func NewSchedulerContext(ctx context.Context, k8sConfig *rest.Config) (*SchedulerContext, error) {
 	clk := clock.RealClock{}
 
 	k8sClient, err := kubernetes.NewForConfig(k8sConfig)
@@ -135,7 +143,7 @@ func NewEnvTestContext(ctx context.Context, k8sConfig *rest.Config) (*EnvTestCon
 		return nil, err
 	}
 
-	return &EnvTestContext{
+	return &SchedulerContext{
 		Namespace:          nsName,
 		Clock:              clk,
 		K8sCfg:             k8sConfig,
@@ -154,7 +162,9 @@ func NewEnvTestContext(ctx context.Context, k8sConfig *rest.Config) (*EnvTestCon
 	}, nil
 }
 
-func (tCtx *EnvTestContext) CleanUp(ctx context.Context) error {
+// CleanUp deletes all relevant cluster-wide and namespaced resources.
+// This can be used to simplify reuse of a single envtest environment across multiple tests.
+func (tCtx *SchedulerContext) CleanUp(ctx context.Context) error {
 	var errs error
 
 	errs = errors.Join(errs,

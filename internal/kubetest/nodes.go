@@ -40,7 +40,7 @@ func NewKWOKNodeManager(nodeClient corev1client.NodeInterface) *KWOKNodeManager 
 	}
 }
 
-func (mgr *KWOKNodeManager) CreateNodes(ctx context.Context, prefix string, count int) ([]*corev1.Node, error) {
+func (mgr *KWOKNodeManager) CreateNodes(ctx context.Context, count int) ([]*corev1.Node, error) {
 	var errs error
 	nodes := make([]*corev1.Node, 0, count)
 
@@ -128,11 +128,10 @@ func (mgr *KWOKNodeManager) WaitForNodesReady(ctx context.Context, opts WaitForN
 
 func (mgr *KWOKNodeManager) CreateAndWaitForReady(
 	ctx context.Context,
-	prefix string,
 	count int,
 	opts WaitForNodesReadyOpts,
 ) ([]*corev1.Node, error) {
-	nodes, err := mgr.CreateNodes(ctx, prefix, count)
+	nodes, err := mgr.CreateNodes(ctx, count)
 	if err != nil {
 		return nodes, err
 	}
@@ -142,6 +141,22 @@ func (mgr *KWOKNodeManager) CreateAndWaitForReady(
 	}
 
 	return nodes, nil
+}
+
+func (mgr *KWOKNodeManager) GetAllocatableByNode(
+	ctx context.Context,
+) (map[string]corev1.ResourceList, error) {
+	nodeList, err := mgr.nodeClient.List(ctx, metav1.ListOptions{LabelSelector: "type=kwok"})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]corev1.ResourceList, len(nodeList.Items))
+	for _, node := range nodeList.Items {
+		result[node.Name] = node.Status.Allocatable
+	}
+
+	return result, nil
 }
 
 func (mgr *KWOKNodeManager) DeleteAll(ctx context.Context) error {
