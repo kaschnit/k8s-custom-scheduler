@@ -106,6 +106,12 @@ k8s-informer-gen: controller-gen-objects k8s-client-gen k8s-lister-gen
         --output-pkg $(MODULE)/client/informers \
         ./apis/scheduling/v1
 
+.PHONY: check
+check: generate go-tidy-check go-fix-check lint test envtest # Run all automated checks.
+
+.PHONY: fix
+fix: generate go-tidy go-fix lint-fix # Run all automated fixes.
+
 .PHONY: go-tidy
 go-tidy: generate ## Tidy go.mod and go.sum.
 	$(GO) mod tidy
@@ -113,6 +119,14 @@ go-tidy: generate ## Tidy go.mod and go.sum.
 .PHONY: go-tidy-check
 go-tidy-check: generate ## Check if go.mod and go.sum are tidy.
 	$(GO) mod tidy --diff
+
+.PHONY: go-fix
+go-fix: generate ## Run go fix
+	$(GO) fix ./...
+
+.PHONY: go-fix-checl
+go-fix-check: generate ## Run go fix
+	$(GO) fix -diff ./...
 
 .PHONY: go-mod-download
 go-mod-download: generate ## Download dependencies from go.mod and go.sum.
@@ -123,11 +137,11 @@ install-deps: go-mod-download ## Install dependencies.
 
 .PHONY: lint
 lint: generate ## Run linters.
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run ./...
 
 .PHONY: lint-fix
 lint-fix: generate ## Run linters and perform fixes.
-	$(GOLANGCI_LINT) run --fix
+	$(GOLANGCI_LINT) run --fix ./...
 
 .PHONY: test
 test: TESTFLAGS := -v -race

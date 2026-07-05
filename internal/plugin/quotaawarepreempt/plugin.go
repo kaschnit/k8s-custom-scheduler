@@ -362,7 +362,7 @@ func (plugin *Plugin) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWit
 				Resource:   fwk.Pod,
 				ActionType: fwk.Update | fwk.Delete,
 			},
-			QueueingHintFn: func(logger klog.Logger, pod *corev1.Pod, oldObj, newObj interface{}) (fwk.QueueingHint, error) {
+			QueueingHintFn: func(logger klog.Logger, pod *corev1.Pod, oldObj, newObj any) (fwk.QueueingHint, error) {
 				return fwk.Queue, nil
 			},
 		},
@@ -371,7 +371,7 @@ func (plugin *Plugin) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWit
 				Resource:   fwk.EventResource(schedv1.QueueFQRN),
 				ActionType: fwk.All,
 			},
-			QueueingHintFn: func(logger klog.Logger, pod *corev1.Pod, oldObj, newObj interface{}) (fwk.QueueingHint, error) {
+			QueueingHintFn: func(logger klog.Logger, pod *corev1.Pod, oldObj, newObj any) (fwk.QueueingHint, error) {
 				return fwk.Queue, nil
 			},
 		},
