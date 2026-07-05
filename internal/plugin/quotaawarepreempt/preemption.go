@@ -9,6 +9,7 @@ import (
 	configv1 "github.com/kaschnit/kaschnit-scheduler/apis/config/v1"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
 	"github.com/kaschnit/kaschnit-scheduler/internal/pdbeval"
+	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
@@ -152,17 +153,17 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 				victimLogger.Info("Potential victim is not lower priority, does not exclude eligibility")
 				continue
 			}
-			if !preemptorQ.CanPodBePreemptedByOthers(victimInfo.GetPod()) {
-				// Terminating pod is not allowed to be a vicitm.
-				// So it is not a preemption victim, it's just a terminating pod.
-				victimLogger.Info("Potential victim does not have victim label, does not exclude eligibility")
-				continue
-			}
 
 			victimQ := queueSnapshot.QueueMgr.Get(victimInfo.GetPod())
 			if victimQ == nil {
 				// No quota to check for victim, move on to the next.
 				victimLogger.Info("Potential victim does not have a queue, does not exclude eligibility")
+				continue
+			}
+			if !victimQ.CanPodBePreemptedByOthers(victimInfo.GetPod()) {
+				// Terminating pod is not allowed to be a victim per queue configuration.
+				// So it is not a preemption victim, it's just a terminating pod.
+				victimLogger.Info("Potential victim cannot be preempted, does not exclude eligibility")
 				continue
 			}
 
@@ -273,11 +274,7 @@ func (p *preemptor) SelectVictimsOnNode(
 				continue
 			}
 
-			if !preemptorQ.CanPreemptTo(pod, victimQ, victimInfo.GetPod()) {
-				// Not a victim if preemptor cannot preempt it.
-				continue
-			}
-			if !victimQ.CanBePreemptedBy(preemptorQ, pod, victimInfo.GetPod()) {
+			if !queue.IsPreemptionAllowed(preemptorQ, pod, victimQ, victimInfo.GetPod()) {
 				// Not a victim if preemptor cannot preempt it.
 				continue
 			}

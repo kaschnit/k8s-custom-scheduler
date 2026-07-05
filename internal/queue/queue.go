@@ -61,12 +61,11 @@ func (q *Queue) Quota() *Quota {
 	return q.quota
 }
 
+// CanPodPreemptOthers returns true if pod belonging to q is allowed to preempt other pods.
+// This is based only on the configuration of q and pod, not other queues or pods.
+// Returns false if pod doesn't belong to q, regardless of configurations.
 func (q *Queue) CanPodPreemptOthers(pod *corev1.Pod) bool {
-	if q == nil {
-		return false
-	}
-
-	if pod == nil {
+	if q == nil || pod == nil {
 		return false
 	}
 
@@ -91,12 +90,11 @@ func (q *Queue) CanPodPreemptOthers(pod *corev1.Pod) bool {
 	return true
 }
 
+// CanPodBePreemptedByOthers returns true if pod belonging to q is allowed to be preempted other pods.
+// This is based only on the configuration of q and pod, not other queues or pods.
+// Returns false if pod doesn't belong to q, regardless of configurations.
 func (q *Queue) CanPodBePreemptedByOthers(pod *corev1.Pod) bool {
-	if q == nil {
-		return false
-	}
-
-	if pod == nil {
+	if q == nil || pod == nil {
 		return false
 	}
 
@@ -115,96 +113,6 @@ func (q *Queue) CanPodBePreemptedByOthers(pod *corev1.Pod) bool {
 
 	// Does q allow pod to be preempted by others?
 	if !q.preemptionCfg.preemptedBy.toPods.Matches(labels.Set(pod.Labels)) {
-		return false
-	}
-
-	return true
-}
-
-func (q *Queue) CanPreemptTo(fromPod *corev1.Pod, toQ *Queue, toPod *corev1.Pod) bool {
-	if q == nil || toQ == nil {
-		return false
-	}
-
-	if fromPod == nil || toPod == nil {
-		return false
-	}
-
-	q.lock.RLock()
-	defer q.lock.RUnlock()
-
-	// Does fromPod belong to q?
-	if fromPod.Labels[scheduling.LabelKeyQueue] != q.name {
-		return false
-	}
-
-	// Does toPod belong to toQ?
-	if toPod.Labels[scheduling.LabelKeyQueue] != toQ.name {
-		return false
-	}
-
-	// Can q preempt at all?
-	if !q.preemptionCfg.preempts.canPreempt() {
-		return false
-	}
-
-	// Does q allow fromPod to preempt?
-	if !q.preemptionCfg.preempts.fromPods.Matches(labels.Set(fromPod.Labels)) {
-		return false
-	}
-
-	// Can toQ be preempted by q?
-	if !q.preemptionCfg.preempts.toQueues.Matches(toQ.Labels()) {
-		return false
-	}
-
-	// Can toPod be preempted by q?
-	if !q.preemptionCfg.preempts.toPods.Matches(labels.Set(toPod.Labels)) {
-		return false
-	}
-
-	return true
-}
-
-func (q *Queue) CanBePreemptedBy(fromQ *Queue, fromPod, toPod *corev1.Pod) bool {
-	if q == nil || fromQ == nil {
-		return false
-	}
-
-	if fromPod == nil || toPod == nil {
-		return false
-	}
-
-	q.lock.RLock()
-	defer q.lock.RUnlock()
-
-	// Does fromPod belong to fromQ?
-	if fromPod.Labels[scheduling.LabelKeyQueue] != fromQ.name {
-		return false
-	}
-
-	// Does toPod belong to q?
-	if toPod.Labels[scheduling.LabelKeyQueue] != q.name {
-		return false
-	}
-
-	// Can q be preempted at all?
-	if !q.preemptionCfg.preemptedBy.canBePreempted() {
-		return false
-	}
-
-	// Can q be preempted by fromQ?
-	if !q.preemptionCfg.preemptedBy.fromQueues.Matches(fromQ.Labels()) {
-		return false
-	}
-
-	// Can q be preempted by fromPod?
-	if !q.preemptionCfg.preemptedBy.fromPods.Matches(labels.Set(fromPod.Labels)) {
-		return false
-	}
-
-	// Does q allow toPod be preempted?
-	if !q.preemptionCfg.preemptedBy.toPods.Matches(labels.Set(toPod.Labels)) {
 		return false
 	}
 
@@ -287,6 +195,7 @@ func WithLabels(lbls labels.Labels) QueueOption {
 	}
 }
 
+// WithPreemptionConfig sets the preemption config on the queue.
 func WithPreemptionConfig(config *PreemptionConfig) QueueOption {
 	return func(q *Queue) {
 		if q == nil {
@@ -299,4 +208,78 @@ func WithPreemptionConfig(config *PreemptionConfig) QueueOption {
 
 		q.preemptionCfg = config
 	}
+}
+
+// IsPreemptionAllowed returns whether fromPod belonging to fromQ can preempt toPod belonging to toQ.
+// Returns false if fromPod doesn't belong to fromQ or toPod doesn't belong to toQ, regardless of
+// configurations.
+func IsPreemptionAllowed(fromQ *Queue, fromPod *corev1.Pod, toQ *Queue, toPod *corev1.Pod) bool {
+	// If any of the args are nil, preemption never makes sense.
+	if fromQ == nil || fromPod == nil || toQ == nil || toPod == nil {
+		return false
+	}
+
+	// Check if fromQ/fromPod matches toQ/toPod (egress / preempts rules).
+	checkEgress := func(toQLabels labels.Labels) bool {
+		// Only lock fromQ, because toQ is not accessed.
+		// Avoid locking both at the same time to prevent deadlock.
+		fromQ.lock.RLock()
+		defer fromQ.lock.RUnlock()
+
+		// Does fromPod belong to fromQ?
+		if fromPod.Labels[scheduling.LabelKeyQueue] != fromQ.name {
+			return false
+		}
+		// Can fromQ preempt at all?
+		if !fromQ.preemptionCfg.preempts.canPreempt() {
+			return false
+		}
+		// Does fromQ allow fromPod to preempt others?
+		if !fromQ.preemptionCfg.preempts.fromPods.Matches(labels.Set(fromPod.Labels)) {
+			return false
+		}
+		// Can fromQ preempt toQ? (queue->queue egress)
+		if !fromQ.preemptionCfg.preempts.toQueues.Matches(toQLabels) {
+			return false
+		}
+		// Can fromQ preempt toPod? (queue->pod egress)
+		if !fromQ.preemptionCfg.preempts.toPods.Matches(labels.Set(toPod.Labels)) {
+			return false
+		}
+
+		return true
+	}
+
+	// Check if toQ/toPod matches fromQ/fromPod (ingress / preemptedBy rules).
+	checkIngress := func(fromQLabels labels.Labels) bool {
+		// Only lock toQ, because fromQ is not accessed.
+		// Avoid locking both at the same time to prevent deadlock.
+		toQ.lock.RLock()
+		defer toQ.lock.RUnlock()
+
+		// Does toPod belong to toQ?
+		if toPod.Labels[scheduling.LabelKeyQueue] != toQ.name {
+			return false
+		}
+		// Can toQ be preempted at all?
+		if !toQ.preemptionCfg.preemptedBy.canBePreempted() {
+			return false
+		}
+		// Does toQ allow toPod be preempted?
+		if !toQ.preemptionCfg.preemptedBy.toPods.Matches(labels.Set(toPod.Labels)) {
+			return false
+		}
+		// Can toQ be preempted by fromQ? (queue->queue ingress)
+		if !toQ.preemptionCfg.preemptedBy.fromQueues.Matches(fromQLabels) {
+			return false
+		}
+		// Can toQ be preempted by fromPod? (pod->queue ingress)
+		if !toQ.preemptionCfg.preemptedBy.fromPods.Matches(labels.Set(fromPod.Labels)) {
+			return false
+		}
+		return true
+	}
+
+	// Careful orchestration to avoid locking both queues at the same time.
+	return checkEgress(toQ.Labels()) && checkIngress(fromQ.Labels())
 }
