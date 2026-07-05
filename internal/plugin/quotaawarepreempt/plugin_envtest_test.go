@@ -28,11 +28,11 @@ import (
 //   - Extended resource interaction
 //
 // - Preemption
-//   - Inter-queue preemption
+//   - Inter-queue preemption / quota, capacity, both
 //   - Multiple victims for one preemptor / intra-queue, inter-queue, both / quota, capacity, both
 //   - Interaction with taints/tolerations, node selectors, etc
 //   - Various preemption policies allowing/preventing preemption
-//   - Extended resource interactions
+//   - Extended resources
 //   - Preempt pod consuming resource X and Y when only requesting resource X
 //   - Preempt pod consuming resource X and Y when requesting resources X and Z
 //   - Interaction with PriorityClass.preemptionPolicy
