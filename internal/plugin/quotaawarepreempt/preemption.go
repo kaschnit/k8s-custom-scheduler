@@ -258,7 +258,7 @@ func (p *preemptor) SelectVictimsOnNode(
 
 	logger.Info("Looking for potential preemption victim on node")
 
-	// Identify all potential victims, simulating their removal.
+	// Identify all potential victims.
 	var potentialVictims []fwk.PodInfo
 	if preemptorQ != nil { // Quota-aware preemption path
 		for _, victimInfo := range nodeInfo.GetPods() {
@@ -283,9 +283,6 @@ func (p *preemptor) SelectVictimsOnNode(
 			}
 
 			potentialVictims = append(potentialVictims, victimInfo)
-			if err := removePod(victimInfo); err != nil {
-				return nil, 0, fwk.AsStatus(err)
-			}
 		}
 	} else { // Vanilla preemption path
 		for _, victimInfo := range nodeInfo.GetPods() {
@@ -300,9 +297,13 @@ func (p *preemptor) SelectVictimsOnNode(
 			}
 
 			potentialVictims = append(potentialVictims, victimInfo)
-			if err := removePod(victimInfo); err != nil {
-				return nil, 0, fwk.AsStatus(err)
-			}
+		}
+	}
+
+	// Simulate removal of potential victims.
+	for _, victimInfo := range potentialVictims {
+		if err := removePod(victimInfo); err != nil {
+			return nil, 0, fwk.AsStatus(err)
 		}
 	}
 

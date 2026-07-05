@@ -25,7 +25,7 @@ func GetPodIDsOnNode(fh fwk.Handle, nodeName string) (sets.Set[types.UID], error
 
 	podsIDsOnNode := make(sets.Set[types.UID], len(nomNodeInfo.GetPods()))
 	for _, podInfo := range nomNodeInfo.GetPods() {
-		podsIDsOnNode.Insert(podInfo.GetPod().UID)
+		podsIDsOnNode.Insert(podInfo.GetPod().GetUID())
 	}
 
 	return podsIDsOnNode, nil

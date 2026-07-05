@@ -136,7 +136,7 @@ test: generate ## Run unit tests.
 	$(GO) test -tags=unit $(TESTFLAGS) $(TESTTARGET)
 
 .PHONY: envtest
-envtest: TESTFLAGS := -race
+envtest: TESTFLAGS := -v -race
 envtest: TESTTARGET := ./...
 envtest: generate ## Run envtest tests.
 	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -i -p path)" \

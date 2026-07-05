@@ -26,7 +26,6 @@ import (
 	kubeschedcfgapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	kubeschedq "k8s.io/kubernetes/pkg/scheduler/backend/queue"
 	fwkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
-	"k8s.io/kubernetes/pkg/scheduler/profile"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	nodefast "sigs.k8s.io/kwok/kustomize/stage/node/fast"
@@ -124,7 +123,7 @@ func NewSchedulerContext(ctx context.Context, k8sConfig *rest.Config) (*Schedule
 		return nil, err
 	}
 
-	infFactory := informers.NewSharedInformerFactory(k8sClient, 0)
+	infFactory := scheduler.NewInformerFactory(k8sClient, 0)
 	infFactory.Start(ctx.Done())
 	infFactory.WaitForCacheSync(ctx.Done())
 
@@ -205,7 +204,12 @@ func newKWOKContoller(
 		return nil, err
 	}
 
-	podInitStage, err := kwokcfg.UnmarshalWithType[*kwokinternal.Stage](podfast.DefaultPodReady)
+	podReadyStage, err := kwokcfg.UnmarshalWithType[*kwokinternal.Stage](podfast.DefaultPodReady)
+	if err != nil {
+		return nil, err
+	}
+
+	podCompleteStage, err := kwokcfg.UnmarshalWithType[*kwokinternal.Stage](podfast.DefaultPodComplete)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +235,7 @@ func newKWOKContoller(
 		Clock:                             clk,
 		LocalStages: map[kwokinternal.StageResourceRef][]*kwokinternal.Stage{
 			{APIGroup: "v1", Kind: "Node"}: {nodeInitStage},
-			{APIGroup: "v1", Kind: "Pod"}:  {podInitStage, podDeleteStage},
+			{APIGroup: "v1", Kind: "Pod"}:  {podReadyStage, podCompleteStage, podDeleteStage},
 		},
 	})
 	if err != nil {
@@ -262,13 +266,6 @@ func newKubeScheduler(
 		return nil, err
 	}
 
-	evtBroadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: k8sClient.EventsV1()})
-	go func() {
-		<-ctx.Done()
-		evtBroadcaster.Shutdown()
-	}()
-	evtBroadcaster.StartRecordingToSink(ctx.Done())
-
 	// TODO: consider using app.Setup() instead of scheduler.New(). This unfortunately
 	// requires CLI-like inputs (path to kubeconfig file) so it's tricky to do with envtest;
 	// however it makes it more aligned with the scheduler cmd's main.go and automates handling
@@ -278,7 +275,7 @@ func newKubeScheduler(
 		k8sClient,
 		infFactory,
 		dynInfFactory,
-		profile.NewRecorderFactory(evtBroadcaster),
+		events.NewEventBroadcasterAdapterWithContext(ctx, k8sClient).NewRecorder,
 		scheduler.WithComponentConfigVersion("kubescheduler.config.k8s.io/v1"),
 		scheduler.WithKubeConfig(k8sConfig),
 		scheduler.WithFrameworkOutOfTreeRegistry(pluginRegistry),

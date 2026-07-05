@@ -154,7 +154,7 @@ func (plugin *Plugin) PreFilter(
 	for _, node := range nodeList {
 		nominatedPods := plugin.fh.NominatedPodsForNode(node.Node().Name)
 		for _, nomPodInfo := range nominatedPods {
-			if nomPodInfo.GetPod().UID == pod.UID {
+			if nomPodInfo.GetPod().GetUID() == pod.GetUID() {
 				// Don't count this pod to avoid double-counting.
 				continue
 			}

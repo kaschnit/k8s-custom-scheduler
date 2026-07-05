@@ -4,7 +4,9 @@ import (
 	"slices"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // PodNominatedForNode asserts that pod appears to be nominated to schedule on the node.
@@ -42,6 +44,16 @@ func PodRunning(t TestingT, pod *corev1.Pod) {
 	assert.NotEmpty(t, pod.Spec.NodeName, "Running pod should have spec.nodeName")
 }
 
+// PodListRunning asserts that all pods in the list are running on some node.
+func PodListAllRunning(t TestingT, pods *corev1.PodList) {
+	t.Helper()
+
+	require.NotNil(t, pods, "Pods list should not be nil")
+	for _, pod := range pods.Items {
+		PodRunning(t, &pod)
+	}
+}
+
 // PodUnschedulable asserts that the is unable to be scheduled.
 func PodUnschedulable(t TestingT, pod *corev1.Pod) {
 	t.Helper()
@@ -61,4 +73,16 @@ func PodUnschedulable(t TestingT, pod *corev1.Pod) {
 				cond.Reason == corev1.PodReasonUnschedulable
 		})
 	}, "Pod should have unschedulable condition")
+}
+
+// PodInPodListByUID asserts that pod is in podList based on UID.
+func PodInPodListByUID(t TestingT, pod *corev1.Pod, podList *corev1.PodList) {
+	require.NotNil(t, podList, "podList should not be nil")
+
+	objs := make([]metav1.Object, 0, len(podList.Items))
+	for _, p := range podList.Items {
+		objs = append(objs, &p)
+	}
+
+	ObjectInListByUID(t, pod, objs)
 }
