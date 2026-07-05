@@ -7,7 +7,7 @@ import (
 
 	schedulingapi "github.com/kaschnit/kaschnit-scheduler/apis/scheduling"
 	schedulingv1 "github.com/kaschnit/kaschnit-scheduler/apis/scheduling/v1"
-	"github.com/kaschnit/kaschnit-scheduler/internal/kubeassert"
+	"github.com/kaschnit/kaschnit-scheduler/internal/kassert"
 	"github.com/kaschnit/kaschnit-scheduler/internal/kubetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,11 +112,11 @@ func TestPlugin(t *testing.T) {
 
 		// Schedule victim pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
-			kubeassert.PodRunning(c, gotVictim)
+			kassert.PodRunning(c, gotVictim)
 		})
 
 		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -133,27 +133,27 @@ func TestPlugin(t *testing.T) {
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
-			kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
+			kassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
 			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
-			kubeassert.IsErrNotFound(c, err, "Victim pod should be deleted")
+			kassert.IsErrNotFound(c, err, "Victim pod should be deleted")
 		})
 
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
-			kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
+			kassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
@@ -163,11 +163,11 @@ func TestPlugin(t *testing.T) {
 
 		// It should be unschedulable
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
-			kubeassert.PodUnschedulable(c, gotVictim)
+			kassert.PodUnschedulable(c, gotVictim)
 		})
 	})
 
@@ -211,11 +211,11 @@ func TestPlugin(t *testing.T) {
 
 		// Schedule victim pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
-			kubeassert.PodRunning(c, gotVictim)
+			kassert.PodRunning(c, gotVictim)
 		})
 
 		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
@@ -232,27 +232,27 @@ func TestPlugin(t *testing.T) {
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
-			kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
+			kassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
 			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
-			kubeassert.IsErrNotFound(c, err, "Victim pod should be deleted")
+			kassert.IsErrNotFound(c, err, "Victim pod should be deleted")
 		})
 
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
-			kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
+			kassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
@@ -262,11 +262,11 @@ func TestPlugin(t *testing.T) {
 
 		// It should be unschedulable
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
-			kubeassert.PodUnschedulable(c, gotVictim)
+			kassert.PodUnschedulable(c, gotVictim)
 		})
 	})
 
@@ -325,14 +325,14 @@ func TestPlugin(t *testing.T) {
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
 				metav1.ListOptions{})
 			require.NoError(c, err, "Failed to list pods")
 			assert.Lenf(t, gotVictims.Items, len(victims), "Expected %d pods", len(victims))
 			for _, gotVictim := range gotVictims.Items {
 				require.NoError(c, err, "Failed to get pod")
-				kubeassert.PodRunning(c, &gotVictim)
+				kassert.PodRunning(c, &gotVictim)
 			}
 		})
 
@@ -351,7 +351,7 @@ func TestPlugin(t *testing.T) {
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
@@ -359,7 +359,7 @@ func TestPlugin(t *testing.T) {
 			// Preemptor pod nominated for one of the victims' nodes.
 			// Assumption is that all victims are on same node.
 			// This is currently a limitation of the preemption algorithm.
-			kubeassert.PodNominatedForNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
+			kassert.PodNominatedForNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
 
 			// Exactly two victim pods had to be chosen to make room for preemptor.
 			// It's not important which two, choice is arbitrary.
@@ -368,16 +368,16 @@ func TestPlugin(t *testing.T) {
 				metav1.ListOptions{})
 			require.NoError(t, err, "Failed to list pods")
 			assert.Len(t, remainingPods.Items, 2)
-			kubeassert.PodInPodListByUID(t, gotPreemptor, remainingPods)
+			kassert.PodInPodListByUID(t, gotPreemptor, remainingPods)
 		})
 
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
-		kubeassert.Eventually(t, func(c *assert.CollectT) {
+		kassert.Eventually(t, func(c *assert.CollectT) {
 			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
 				preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
-			kubeassert.PodRunningOnNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
+			kassert.PodRunningOnNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
 		})
 
 		// Ensure two remaining pods, one preemptor and one victim.
@@ -386,8 +386,8 @@ func TestPlugin(t *testing.T) {
 			metav1.ListOptions{})
 		require.NoError(t, err, "Failed to list pods")
 		assert.Len(t, remainingPods.Items, 2)
-		kubeassert.PodInPodListByUID(t, preemptor, remainingPods)
-		kubeassert.PodListAllRunning(t, remainingPods)
+		kassert.PodInPodListByUID(t, preemptor, remainingPods)
+		kassert.PodListAllRunning(t, remainingPods)
 	})
 }
 

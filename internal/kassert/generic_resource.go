@@ -1,4 +1,4 @@
-package kubeassert
+package kassert
 
 import (
 	"github.com/stretchr/testify/assert"
