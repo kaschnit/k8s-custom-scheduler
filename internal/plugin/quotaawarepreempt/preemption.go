@@ -222,8 +222,6 @@ func (p *preemptor) SelectVictimsOnNode(
 	// when calling simulated PreFilter/Filter/etc.
 	stateMgr := NewStateManager(state)
 
-	requestedRes := alloc.FromPodReq(pod)
-
 	queueSnapshot, err := stateMgr.ReadQueueSnapshot()
 	if err != nil {
 		logger.Error(err, "Failed to read queueSnapshot from cycleState")
@@ -255,54 +253,9 @@ func (p *preemptor) SelectVictimsOnNode(
 	}
 
 	preemptorQ := queueSnapshot.QueueMgr.Get(pod)
-	preemptorPrio := corev1helpers.PodPriority(pod)
 
 	logger.Info("Looking for potential preemption victim on node")
-
-	// Identify all potential victims.
-	var potentialVictims []fwk.PodInfo
-	if preemptorQ != nil { // Quota-aware preemption path
-		for _, victimInfo := range nodeInfo.GetPods() {
-			victimQ := queueSnapshot.QueueMgr.Get(victimInfo.GetPod())
-			if victimQ == nil {
-				// Not a victim if it has no queue/quota specified.
-				continue
-			}
-
-			if corev1helpers.PodPriority(victimInfo.GetPod()) >= preemptorPrio {
-				// Not a victim if it's same or higher priority than the preemptor.
-				continue
-			}
-
-			if !queue.IsPreemptionAllowed(preemptorQ, pod, victimQ, victimInfo.GetPod()) {
-				// Not a victim if preemptor cannot preempt it.
-				continue
-			}
-
-			potentialVictims = append(potentialVictims, victimInfo)
-		}
-	} else { // Vanilla preemption path
-		for _, victimInfo := range nodeInfo.GetPods() {
-			if victimQ := queueSnapshot.QueueMgr.Get(victimInfo.GetPod()); victimQ != nil {
-				// Not a victim for vanilla preemption path if it has a quota.
-				continue
-			}
-
-			if corev1helpers.PodPriority(victimInfo.GetPod()) >= preemptorPrio {
-				// Not a victim if it's same or higher priority than the preemptor.
-				continue
-			}
-
-			potentialVictims = append(potentialVictims, victimInfo)
-		}
-	}
-
-	// Simulate removal of potential victims.
-	for _, victimInfo := range potentialVictims {
-		if err := removePod(victimInfo); err != nil {
-			return nil, 0, fwk.AsStatus(err)
-		}
-	}
+	potentialVictims := getPotentialVictims(pod, preemptorQ, queueSnapshot, nodeInfo)
 
 	if len(potentialVictims) == 0 {
 		// No potential victims are found, so we don't need to evaluate the node again since its state didn't change.
@@ -314,6 +267,13 @@ func (p *preemptor) SelectVictimsOnNode(
 	logger.Info("Found potential victims on node",
 		"numPotentialVictims", len(potentialVictims))
 
+	// Simulate removal of potential victims from node.
+	for _, victimInfo := range potentialVictims {
+		if err := removePod(victimInfo); err != nil {
+			return nil, 0, fwk.AsStatus(err)
+		}
+	}
+
 	if status := p.fh.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo); !status.IsSuccess() {
 		// If the new pod does not fit after removing all the lower priority pods,
 		// this node is not suitable for preemption. We can skip the expensive reprieval logic.
@@ -321,6 +281,7 @@ func (p *preemptor) SelectVictimsOnNode(
 		return nil, 0, status
 	}
 
+	requestedRes := alloc.FromPodReq(pod)
 	if preemptorQ != nil && preemptorQ.Quota().WouldPutOverMax(requestedRes) {
 		// If there's a quota and it's exceeded even after removing all potential victims,
 		// there's nothing we can do on this node to make pods schedule. So this node is
@@ -424,7 +385,9 @@ func (p *preemptor) SelectVictimsOnNode(
 
 	// PDB violation eval may cause victims to be out of order.
 	// Ensure victims are kept in order from highest priority to lowest priority.
-	sort.Slice(victims, func(i, j int) bool { return schedutil.MoreImportantPod(victims[i], victims[j]) })
+	sort.Slice(victims, func(i, j int) bool {
+		return schedutil.MoreImportantPod(victims[i], victims[j])
+	})
 
 	logger.Info("Finished selecting victims on node",
 		"numVictims", len(victims),
@@ -433,7 +396,59 @@ func (p *preemptor) SelectVictimsOnNode(
 	return victims, numPDBViolationVictims, fwk.NewStatus(fwk.Success)
 }
 
+// getPotentialVictims identifies all potential preemption victims for preemptor.
+// preemptorQ may be nil if the preemptor does not belong to a queue. All other
+// arguments are expected to be non-nil.
+func getPotentialVictims(
+	preemptor *corev1.Pod,
+	preemptorQ *queue.Queue,
+	queueSnapshot *QueueSnapshotState,
+	nodeInfo fwk.NodeInfo,
+) []fwk.PodInfo {
+	preemptorPrio := corev1helpers.PodPriority(preemptor)
+
+	var potentialVictims []fwk.PodInfo
+	if preemptorQ != nil { // Quota-aware preemption path
+		for _, victimInfo := range nodeInfo.GetPods() {
+			victimQ := queueSnapshot.QueueMgr.Get(victimInfo.GetPod())
+			if victimQ == nil {
+				// Not a victim if it has no queue/quota specified.
+				continue
+			}
+
+			if corev1helpers.PodPriority(victimInfo.GetPod()) >= preemptorPrio {
+				// Not a victim if it's same or higher priority than the preemptor.
+				continue
+			}
+
+			if !queue.IsPreemptionAllowed(preemptorQ, preemptor, victimQ, victimInfo.GetPod()) {
+				// Not a victim if preemptor cannot preempt it.
+				continue
+			}
+
+			potentialVictims = append(potentialVictims, victimInfo)
+		}
+	} else { // Vanilla preemption path
+		for _, victimInfo := range nodeInfo.GetPods() {
+			if victimQ := queueSnapshot.QueueMgr.Get(victimInfo.GetPod()); victimQ != nil {
+				// Not a victim for vanilla preemption path if it has a quota.
+				continue
+			}
+
+			if corev1helpers.PodPriority(victimInfo.GetPod()) >= preemptorPrio {
+				// Not a victim if it's same or higher priority than the preemptor.
+				continue
+			}
+
+			potentialVictims = append(potentialVictims, victimInfo)
+		}
+	}
+
+	return potentialVictims
+}
+
 // podTerminatingByPreemption returns true if the pod is in the termination state caused by scheduler preemption.
+// TODO: replace with preemption package API when available in scheduling framework release: https://github.com/kubernetes/kubernetes/blob/28a13bcbd0c199dd1914140a688fa1c14696c75e/pkg/scheduler/framework/preemption/util.go#L24
 func podTerminatingByPreemption(p *corev1.Pod) bool {
 	if p.DeletionTimestamp == nil {
 		return false

@@ -88,10 +88,6 @@ func (qm *Manager) Delete(name string) {
 	qm.lock.Lock()
 	defer qm.lock.Unlock()
 
-	qm.deleteNoLock(name)
-}
-
-func (qm *Manager) deleteNoLock(name string) {
 	delete(qm.queueByName, name)
 }
 
@@ -99,8 +95,8 @@ func (qm *Manager) deleteNoLock(name string) {
 func (qm *Manager) QueueIter() iter.Seq[*Queue] {
 	return func(yield func(*Queue) bool) {
 		qmClone := qm.Clone()
-		for _, queue := range qmClone.queueByName {
-			if !yield(queue) {
+		for _, q := range qmClone.queueByName {
+			if !yield(q) {
 				return
 			}
 		}

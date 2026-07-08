@@ -170,7 +170,7 @@ func (q *Quota) Clone() *Quota {
 	defer q.lock.RUnlock()
 
 	return &Quota{
-		podsByID: q.podsByID,
+		podsByID: q.podsByID, // immutable data structure
 		max:      q.max.Clone(),
 		used:     q.used.Clone(),
 	}
@@ -193,7 +193,6 @@ func (q *Quota) stringNoLock() string {
 			break
 		}
 		if pod != nil {
-			// "namespace/name" is much more useful than a raw types.UID string
 			podSamples = append(podSamples, fmt.Sprintf("%s/%s", pod.Namespace, pod.Name))
 		}
 	}

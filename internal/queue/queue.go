@@ -161,8 +161,8 @@ func (q *Queue) Clone() *Queue {
 	return &Queue{
 		name:          q.name, // copy by value
 		quota:         q.quota.Clone(),
-		labels:        q.labels,        // read only
-		preemptionCfg: q.preemptionCfg, // read only
+		labels:        q.labels,        // treated as immutable
+		preemptionCfg: q.preemptionCfg, // treated as immutable
 	}
 }
 
