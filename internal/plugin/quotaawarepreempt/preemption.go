@@ -132,7 +132,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 			victimLogger := logger.V(5).WithValues("victimPod", klog.KObj(victimInfo.GetPod()))
 
 			victimLogger.Info("Checking potential victim pod")
-			if !podTerminatingByPreemption(victimInfo.GetPod()) {
+			if !pods.TerminatingByPreemption(victimInfo.GetPod()) {
 				// Potential victim is not being deleted by preemption, move on to the next.
 				victimLogger.Info("Potential victim is not terminating via preemption, does not exclude eligibility")
 				continue
@@ -171,7 +171,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 		}
 	} else { // Vanilla preemption path
 		for _, victimInfo := range nodeInfo.GetPods() {
-			if !podTerminatingByPreemption(victimInfo.GetPod()) {
+			if !pods.TerminatingByPreemption(victimInfo.GetPod()) {
 				// Victim is not being deleted by preemption, move on to the next.
 				continue
 			}
@@ -432,20 +432,4 @@ func findPotentialVictims(
 	}
 
 	return potentialVictims
-}
-
-// podTerminatingByPreemption returns true if the pod is in the termination state caused by scheduler preemption.
-// TODO: replace with preemption package API when available in scheduling framework release: https://github.com/kubernetes/kubernetes/blob/28a13bcbd0c199dd1914140a688fa1c14696c75e/pkg/scheduler/framework/preemption/util.go#L24
-func podTerminatingByPreemption(p *corev1.Pod) bool {
-	if p.DeletionTimestamp == nil {
-		return false
-	}
-
-	for _, condition := range p.Status.Conditions {
-		if condition.Type == corev1.DisruptionTarget {
-			return condition.Status == corev1.ConditionTrue && condition.Reason == corev1.PodReasonPreemptionByScheduler
-		}
-	}
-
-	return false
 }

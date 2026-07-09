@@ -27,3 +27,14 @@ func PolicyAllowsPreemption(pod *corev1.Pod) bool {
 		return false
 	}
 }
+
+// TerminatingByPreemption returns true if the pod is in the termination state caused by scheduler preemption.
+// TODO: replace with preemption package API when available in scheduling framework release: https://github.com/kubernetes/kubernetes/blob/28a13bcbd0c199dd1914140a688fa1c14696c75e/pkg/scheduler/framework/preemption/util.go#L24
+func TerminatingByPreemption(pod *corev1.Pod) bool {
+	if pod.DeletionTimestamp == nil {
+		return false
+	}
+
+	return HasCondition(pod, corev1.DisruptionTarget, corev1.ConditionTrue,
+		corev1.PodReasonPreemptionByScheduler)
+}
