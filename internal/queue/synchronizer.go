@@ -8,7 +8,7 @@ import (
 	schedv1 "github.com/kaschnit/kaschnit-scheduler/apis/scheduling/v1"
 	schedinformers "github.com/kaschnit/kaschnit-scheduler/client/informers/externalversions"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
-	"github.com/kaschnit/kaschnit-scheduler/internal/podstates"
+	"github.com/kaschnit/kaschnit-scheduler/internal/pods"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -240,7 +240,7 @@ func (syn *Synchronizer) updatePod(oldObj, newObj any) {
 			"newObj", newObj)
 	}
 
-	if podstates.IsTerminal(oldPod.Status.Phase) || podstates.IsNonTerminal(newPod.Status.Phase) {
+	if pods.IsTerminal(oldPod) || pods.IsNonTerminal(newPod) {
 		return
 	}
 

@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 
 	configv1 "github.com/kaschnit/kaschnit-scheduler/apis/config/v1"
 	"github.com/kaschnit/kaschnit-scheduler/internal/alloc"
 	"github.com/kaschnit/kaschnit-scheduler/internal/pdbeval"
+	"github.com/kaschnit/kaschnit-scheduler/internal/pods"
 	"github.com/kaschnit/kaschnit-scheduler/internal/queue"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -17,7 +18,6 @@ import (
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
-	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
 )
 
 type preemptor struct {
@@ -66,17 +66,9 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	logger := p.logger.WithValues("preemptorPod", klog.KObj(pod))
 	stateMgr := NewStateManager(p.cycleState)
 
-	// Check the PreemptionPolicy from the PriorityClass.
-	// If not provided, preemption is allowed (default is PreemptLowerPriority).
-	if pod.Spec.PreemptionPolicy != nil {
-		switch *pod.Spec.PreemptionPolicy {
-		case corev1.PreemptNever:
-			return false, "Not eligible to preempt due to preemptionPolicy=Never."
-		case corev1.PreemptLowerPriority: // Preemption allowed
-		case "": // Preemption allowed; use our label-based preemption if unspecified
-		default:
-			return false, "Not eligible to preempt due to unknown preemptionPolicy."
-		}
+	// Check the PreemptionPolicy specified by the pod's PriorityClass.
+	if !pods.PolicyAllowsPreemption(pod) {
+		return false, "Not eligible to preempt due to configured preemptionPolicy"
 	}
 
 	// Fetch the queue snapshot.
@@ -86,9 +78,8 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 		return false, "Not eligible to preempt due to failed to read queue snapshot from cycleState."
 	}
 
-	preemptorQ := queueSnapshot.QueueMgr.Get(pod)
-
 	// Pod is not eligible to preempt if its queue config says it can't preempt.
+	preemptorQ := queueSnapshot.QueueMgr.Get(pod)
 	if !preemptorQ.CanPodPreemptOthers(pod) {
 		return false, "Not eligible to preempt due to queue's preemption config not allowing preemption."
 	}
@@ -121,8 +112,6 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 		return false, "Unable to find info of nominated node."
 	}
 
-	requestedRes := alloc.FromPodReq(pod)
-
 	// At this point, we have a pod that has a still-valid node nomination.
 	// This means it has already selected victims on the nominated node.
 	// We must check if we should again perform victim selection on the nominated node.
@@ -131,6 +120,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(
 	// on the nominated node; such terminations may indicate that the preemption resulting
 	// from the previous victim selection is still in-progress.
 	// We don't want to perform victim selection if we don't have to because it's expensive.
+	requestedRes := alloc.FromPodReq(pod)
 	preemptorPriority := corev1helpers.PodPriority(pod)
 	if preemptorQ != nil { // Quota-aware preemption path
 		wouldBeOverQuota := preemptorQ.Quota().WouldPutOverMax(requestedRes)
@@ -240,7 +230,6 @@ func (p *preemptor) SelectVictimsOnNode(
 		}
 		return nil
 	}
-
 	// Simulate adding pi to this node.
 	// This adjusts the queue snapshot's qutoa usage accordingly.
 	addPod := func(pi fwk.PodInfo) error {
@@ -255,7 +244,7 @@ func (p *preemptor) SelectVictimsOnNode(
 	preemptorQ := queueSnapshot.QueueMgr.Get(pod)
 
 	logger.Info("Looking for potential preemption victim on node")
-	potentialVictims := getPotentialVictims(pod, preemptorQ, queueSnapshot, nodeInfo)
+	potentialVictims := findPotentialVictims(pod, preemptorQ, queueSnapshot, nodeInfo)
 
 	if len(potentialVictims) == 0 {
 		// No potential victims are found, so we don't need to evaluate the node again since its state didn't change.
@@ -298,8 +287,8 @@ func (p *preemptor) SelectVictimsOnNode(
 	// Sort potential victims in descending order of priority.
 	// We want to try to reprieve the highest-priority pods first, so that we
 	// only select the lowest-priority victims that we can.
-	sort.Slice(potentialVictims, func(i, j int) bool {
-		return schedutil.MoreImportantPod(potentialVictims[i].GetPod(), potentialVictims[j].GetPod())
+	slices.SortFunc(potentialVictims, func(a, b fwk.PodInfo) int {
+		return pods.CompareImportanceDesc(a.GetPod(), b.GetPod())
 	})
 
 	// Final victims list, built from reprieval.
@@ -385,9 +374,7 @@ func (p *preemptor) SelectVictimsOnNode(
 
 	// PDB violation eval may cause victims to be out of order.
 	// Ensure victims are kept in order from highest priority to lowest priority.
-	sort.Slice(victims, func(i, j int) bool {
-		return schedutil.MoreImportantPod(victims[i], victims[j])
-	})
+	slices.SortFunc(victims, pods.CompareImportanceDesc)
 
 	logger.Info("Finished selecting victims on node",
 		"numVictims", len(victims),
@@ -396,16 +383,16 @@ func (p *preemptor) SelectVictimsOnNode(
 	return victims, numPDBViolationVictims, fwk.NewStatus(fwk.Success)
 }
 
-// getPotentialVictims identifies all potential preemption victims for preemptor.
+// findPotentialVictims identifies all potential preemption victims for preemptor.
 // preemptorQ may be nil if the preemptor does not belong to a queue. All other
 // arguments are expected to be non-nil.
-func getPotentialVictims(
-	preemptor *corev1.Pod,
+func findPotentialVictims(
+	preemptorPod *corev1.Pod,
 	preemptorQ *queue.Queue,
 	queueSnapshot *QueueSnapshotState,
 	nodeInfo fwk.NodeInfo,
 ) []fwk.PodInfo {
-	preemptorPrio := corev1helpers.PodPriority(preemptor)
+	preemptorPrio := corev1helpers.PodPriority(preemptorPod)
 
 	var potentialVictims []fwk.PodInfo
 	if preemptorQ != nil { // Quota-aware preemption path
@@ -421,7 +408,7 @@ func getPotentialVictims(
 				continue
 			}
 
-			if !queue.IsPreemptionAllowed(preemptorQ, preemptor, victimQ, victimInfo.GetPod()) {
+			if !queue.IsPreemptionAllowed(preemptorQ, preemptorPod, victimQ, victimInfo.GetPod()) {
 				// Not a victim if preemptor cannot preempt it.
 				continue
 			}
