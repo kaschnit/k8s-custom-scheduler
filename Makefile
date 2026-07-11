@@ -1,10 +1,10 @@
 .DEFAULT_GOAL := help
 
 ## Shell config
-SHELL = /usr/bin/env bash -o pipefail
-.SHELLFLAGS = -ec
+SHELL := /usr/bin/env bash
+.SHELLFLAGS := -euo pipefail -c
 
-## Tool Binaries
+## Tools
 GO ?= go
 KUBECTL ?= $(GO) tool k8s.io/kubernetes/cmd/kubectl
 KIND ?= $(GO) tool sigs.k8s.io/kind
@@ -19,13 +19,13 @@ INFORMER_GEN ?= $(GO) tool k8s.io/code-generator/cmd/informer-gen
 HELM ?= $(GO) tool helm.sh/helm/v4/cmd/helm
 SETUP_ENVTEST ?= $(GO) tool sigs.k8s.io/controller-runtime/tools/setup-envtest
 
-MODULE := $(shell $(GO) list -m)
+MODULE = $(shell $(GO) list -m)
 
-K8S_VERSION := $(shell $(GO) list -m -f '{{ .Version }}' k8s.io/api)
-ENVTEST_K8S_VERSION := $(shell echo $(K8S_VERSION) | sed -E 's/v0\.([0-9]+)\.[0-9]+/1.\1.0/')
+K8S_VERSION = $(shell $(GO) list -m -f '{{ .Version }}' k8s.io/api)
+ENVTEST_K8S_VERSION = $(shell echo $(K8S_VERSION) | sed -E 's/v0\.([0-9]+)\.[0-9]+/1.\1.x/')
 
 # KIND
-KIND_CLUSTER_NAME = "kind-scheduler-test"
+KIND_CLUSTER_NAME := "kind-scheduler-test"
 
 CMD := $(CURDIR)/cmd/scheduler
 
@@ -33,7 +33,7 @@ CMD := $(CURDIR)/cmd/scheduler
 BUILD_DIR := $(CURDIR)/build
 
 # Binary
-LOCALBIN_DIR := $(BUILD_DIR)/bin
+LOCALBIN_DIR := $(CURDIR)/bin
 
 # Image
 IMG_DIR := $(BUILD_DIR)/image
@@ -60,7 +60,8 @@ help: ## Display this help.
 .PHONY: clean
 clean: ## Clean up files.
 	find . -name .DS_Store -type f -delete
-	rm -rf $(BUILD_DIR)
+	-chmod -R +w $(BUILD_DIR) $(LOCALBIN_DIR) 2>/dev/null || true
+	rm -rf $(BUILD_DIR) $(LOCALBIN_DIR)
 
 ##@ Development
 
@@ -152,8 +153,8 @@ test: generate ## Run unit tests.
 .PHONY: envtest
 envtest: TESTFLAGS := -v -race
 envtest: TESTTARGET := ./...
-envtest: generate ## Run envtest tests.
-	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -i -p path)" \
+envtest: $(LOCALBIN_DIR) generate ## Run envtest tests.
+	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN_DIR) -p path)" \
 	go test -tags=envtest $(TESTFLAGS) $(TESTTARGET)
 
 ##@ Build
