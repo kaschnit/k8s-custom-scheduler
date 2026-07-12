@@ -5,16 +5,15 @@ package quotaawarepreempt_test
 import (
 	"testing"
 
-	schedulingapi "github.com/kaschnit/kaschnit-scheduler/apis/scheduling"
 	schedulingv1 "github.com/kaschnit/kaschnit-scheduler/apis/scheduling/v1"
 	"github.com/kaschnit/kaschnit-scheduler/internal/kassert"
 	"github.com/kaschnit/kaschnit-scheduler/internal/kubetest"
+	"github.com/kaschnit/kaschnit-scheduler/internal/pods"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 // TODO: Additional tests to add:
@@ -105,67 +104,64 @@ func TestPlugin(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create queues")
 
-		victim := newPodForQueue(tCtx, "tenant-a", "low", nodeAllocatable)
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			victim, metav1.CreateOptions{})
+		victimOpts := []pods.Option{
+			pods.WithQueue("tenant-a"),
+			pods.WithPriorityClass("low"),
+			kubetest.WithDummyContainer(nodeAllocatable),
+		}
+		victim, err := tCtx.PodMgr.Create(t.Context(), victimOpts...)
 		require.NoError(t, err)
 
 		// Schedule victim pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			gotVictim, err := tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
 			kassert.PodRunning(c, gotVictim)
 		})
 
-		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-			victim.Name, metav1.GetOptions{})
+		gotVictim, err := tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get victim pod")
 
-		preemptor := newPodForQueue(tCtx, "tenant-a", "high", corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("2"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		})
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			preemptor, metav1.CreateOptions{})
+		preemptor, err := tCtx.PodMgr.Create(t.Context(),
+			pods.WithQueue("tenant-a"),
+			pods.WithPriorityClass("high"),
+			kubetest.WithDummyContainer(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			}))
 		require.NoError(t, err)
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
 			kassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
-			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			_, err = tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			kassert.IsErrNotFound(c, err, "Victim pod should be deleted")
 		})
 
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 			kassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			victim, metav1.CreateOptions{})
+		victim, err = tCtx.PodMgr.Create(t.Context(), victimOpts...)
 		require.NoError(t, err)
 
 		// It should be unschedulable
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			gotVictim, err = tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
 			kassert.PodUnschedulable(c, gotVictim)
 		})
@@ -201,70 +197,67 @@ func TestPlugin(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create queues")
 
-		victim := newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("3"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		})
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			victim, metav1.CreateOptions{})
+		victimOpts := []pods.Option{
+			pods.WithQueue("tenant-a"),
+			pods.WithPriorityClass("low"),
+			kubetest.WithDummyContainer(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("3"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			}),
+		}
+		victim, err := tCtx.PodMgr.Create(t.Context(), victimOpts...)
 		require.NoError(t, err)
 
 		// Schedule victim pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			gotVictim, err := tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get victim pod")
 			kassert.PodRunning(c, gotVictim)
 		})
 
-		gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-			victim.Name, metav1.GetOptions{})
+		gotVictim, err := tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 		require.NoError(t, err, "Failed to get victim pod")
 
-		preemptor := newPodForQueue(tCtx, "tenant-a", "high", corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("2"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		})
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			preemptor, metav1.CreateOptions{})
+		preemptor, err := tCtx.PodMgr.Create(t.Context(),
+			pods.WithQueue("tenant-a"),
+			pods.WithPriorityClass("high"),
+			kubetest.WithDummyContainer(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			}))
 		require.NoError(t, err)
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated
 			kassert.PodNominatedForNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 
 			// Victim pod deleted
-			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			_, err = tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			kassert.IsErrNotFound(c, err, "Victim pod should be deleted")
 		})
 
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 			kassert.PodRunningOnNode(c, gotPreemptor, gotVictim.Spec.NodeName)
 		})
 
 		// Create victim again
-		_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			victim, metav1.CreateOptions{})
+		victim, err = tCtx.PodMgr.Create(t.Context(), victimOpts...)
 		require.NoError(t, err)
 
 		// It should be unschedulable
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotVictim, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				victim.Name, metav1.GetOptions{})
+			gotVictim, err := tCtx.PodMgr.Get(t.Context(), victim.Name, metav1.GetOptions{})
 			require.NoError(t, err, "Failed to get victim pod")
 			kassert.PodUnschedulable(c, gotVictim)
 		})
@@ -300,25 +293,32 @@ func TestPlugin(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create queues")
 
+		createVictim := func(req corev1.ResourceList) *corev1.Pod {
+			t.Helper()
+
+			victim, err := tCtx.PodMgr.Create(t.Context(),
+				pods.WithQueue("tenant-a"),
+				pods.WithPriorityClass("low"),
+				kubetest.WithDummyContainer(req))
+			require.NoError(t, err)
+
+			return victim
+		}
+
 		// Combined the three victims take up entire quota.
 		victims := [3]*corev1.Pod{
-			newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+			createVictim(corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
 			}),
-			newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+			createVictim(corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("1"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
 			}),
-			newPodForQueue(tCtx, "tenant-a", "low", corev1.ResourceList{
+			createVictim(corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("1"),
 				corev1.ResourceMemory: resource.MustParse("1Gi"),
 			}),
-		}
-		for _, victim := range victims {
-			_, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-				victim, metav1.CreateOptions{})
-			require.NoError(t, err, "Failed to create pod")
 		}
 
 		// Schedule victim pods
@@ -326,8 +326,7 @@ func TestPlugin(t *testing.T) {
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
-				metav1.ListOptions{})
+			gotVictims, err := tCtx.PodMgr.List(t.Context(), metav1.ListOptions{})
 			require.NoError(c, err, "Failed to list pods")
 			assert.Lenf(t, gotVictims.Items, len(victims), "Expected %d pods", len(victims))
 			for _, gotVictim := range gotVictims.Items {
@@ -336,24 +335,23 @@ func TestPlugin(t *testing.T) {
 			}
 		})
 
-		gotVictims, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
-			metav1.ListOptions{})
+		gotVictims, err := tCtx.PodMgr.List(t.Context(), metav1.ListOptions{})
 		require.NoError(t, err, "Failed to list pods")
 		assert.Lenf(t, gotVictims.Items, len(victims), "Expected %d pods", len(victims))
 
-		preemptor := newPodForQueue(tCtx, "tenant-a", "high", corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("3"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		})
-		preemptor, err = tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Create(t.Context(),
-			preemptor, metav1.CreateOptions{})
+		preemptor, err := tCtx.PodMgr.Create(t.Context(),
+			pods.WithQueue("tenant-a"),
+			pods.WithPriorityClass("high"),
+			kubetest.WithDummyContainer(corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("3"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			}))
 		require.NoError(t, err)
 
 		// Perform preemption, resulting in nominated node for preemptor pod
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 
 			// Preemptor pod nominated for one of the victims' nodes.
@@ -364,8 +362,7 @@ func TestPlugin(t *testing.T) {
 			// Exactly two victim pods had to be chosen to make room for preemptor.
 			// It's not important which two, choice is arbitrary.
 			// That leaves 1 preemptor pod and 1 victim pod.
-			remainingPods, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
-				metav1.ListOptions{})
+			remainingPods, err := tCtx.PodMgr.List(t.Context(), metav1.ListOptions{})
 			require.NoError(t, err, "Failed to list pods")
 			assert.Len(t, remainingPods.Items, 2)
 			kassert.PodInPodListByUID(t, gotPreemptor, remainingPods)
@@ -374,62 +371,17 @@ func TestPlugin(t *testing.T) {
 		// Perform scheduling for nominated node
 		tCtx.Scheduler.ScheduleOne(t.Context())
 		kassert.Eventually(t, func(c *assert.CollectT) {
-			gotPreemptor, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).Get(t.Context(),
-				preemptor.Name, metav1.GetOptions{})
+			gotPreemptor, err := tCtx.PodMgr.Get(t.Context(), preemptor.Name, metav1.GetOptions{})
 			require.NoError(c, err, "Failed to get preemptor pod")
 			kassert.PodRunningOnNode(c, gotPreemptor, gotVictims.Items[0].Spec.NodeName)
 		})
 
 		// Ensure two remaining pods, one preemptor and one victim.
 		// Both now running.
-		remainingPods, err := tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).List(t.Context(),
-			metav1.ListOptions{})
+		remainingPods, err := tCtx.PodMgr.List(t.Context(), metav1.ListOptions{})
 		require.NoError(t, err, "Failed to list pods")
 		assert.Len(t, remainingPods.Items, 2)
 		kassert.PodInPodListByUID(t, preemptor, remainingPods)
 		kassert.PodListAllRunning(t, remainingPods)
 	})
-}
-
-func newPodForQueue(
-	tCtx *kubetest.SchedulerContext,
-	queue string,
-	priorityClassName string,
-	requests corev1.ResourceList,
-) *corev1.Pod {
-	pod := newPod(tCtx, requests)
-	pod.Labels[schedulingapi.LabelKeyQueue] = queue
-	pod.Spec.PriorityClassName = priorityClassName
-	return pod
-}
-
-func newPod(tCtx *kubetest.SchedulerContext, requests corev1.ResourceList) *corev1.Pod {
-	if requests == nil {
-		requests = corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("1"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		}
-	}
-
-	return &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Pod",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      string(uuid.NewUUID()),
-			Namespace: tCtx.Namespace,
-			Labels:    make(map[string]string),
-		},
-		Spec: corev1.PodSpec{
-			SchedulerName: kubetest.SchedulerName,
-			Containers: []corev1.Container{
-				{
-					Name:      "test-container",
-					Image:     "fake-image",
-					Resources: corev1.ResourceRequirements{Requests: requests},
-				},
-			},
-		},
-	}
 }

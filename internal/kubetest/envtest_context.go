@@ -81,6 +81,7 @@ type SchedulerContext struct {
 	DynInformerFactory dynamicinformer.DynamicSharedInformerFactory
 	RESTMapper         meta.RESTMapper
 	Scheduler          *scheduler.Scheduler
+	PodMgr             *PodManager
 	NodeMgr            *KWOKNodeManager
 	PCMgr              *PriorityClassManager
 	QMgr               *QueueManager
@@ -155,6 +156,7 @@ func NewSchedulerContext(ctx context.Context, k8sConfig *rest.Config) (*Schedule
 		DynInformerFactory: dynInfFactory,
 		RESTMapper:         restMapper,
 		Scheduler:          kubeScheduler,
+		PodMgr:             NewPodManager(k8sClient.CoreV1(), nsName),
 		NodeMgr:            NewKWOKNodeManager(k8sClient.CoreV1().Nodes()),
 		PCMgr:              NewPCManager(k8sClient.SchedulingV1().PriorityClasses()),
 		QMgr:               NewQueueManager(schedulingClient.SchedulingV1().Queues()),
@@ -165,22 +167,16 @@ func NewSchedulerContext(ctx context.Context, k8sConfig *rest.Config) (*Schedule
 // CleanUp deletes all relevant cluster-wide and namespaced resources.
 // This can be used to simplify reuse of a single envtest environment across multiple tests.
 func (tCtx *SchedulerContext) CleanUp(ctx context.Context) error {
-	var errs error
-
-	errs = errors.Join(errs,
-		tCtx.K8sClient.CoreV1().Pods(tCtx.Namespace).DeleteCollection(ctx,
-			metav1.DeleteOptions{
-				GracePeriodSeconds: new(int64(0)),
-				PropagationPolicy:  new(metav1.DeletePropagationBackground),
-			}, metav1.ListOptions{}))
-	errs = errors.Join(errs, tCtx.QMgr.DeleteAll(ctx))
-	errs = errors.Join(errs, tCtx.PCMgr.DeleteAll(ctx))
-	errs = errors.Join(errs, tCtx.NodeMgr.DeleteAllWait(ctx, WaitForNodesDeleteOpts{}))
-	errs = errors.Join(errs,
+	errs := errors.Join(
+		tCtx.PodMgr.DeleteAll(ctx),
+		tCtx.QMgr.DeleteAll(ctx),
+		tCtx.PCMgr.DeleteAll(ctx),
+		tCtx.NodeMgr.DeleteAllWait(ctx, WaitForNodesDeleteOpts{}),
 		tCtx.K8sClient.CoreV1().Namespaces().Delete(ctx, tCtx.Namespace, metav1.DeleteOptions{
 			GracePeriodSeconds: new(int64(0)),
 			PropagationPolicy:  new(metav1.DeletePropagationBackground),
-		}))
+		}),
+	)
 
 	if tCtx.InformerFactory != nil {
 		tCtx.InformerFactory.Shutdown()
